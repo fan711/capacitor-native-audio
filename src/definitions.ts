@@ -300,6 +300,18 @@ export interface AudioPlayerPlugin {
     isPlaying(params: AudioPlayerDefaultParams): Promise<{ isPlaying: boolean }>;
 
     /**
+     * Get the current metadata for the audio source.
+     *
+     * @since 3.1.0
+     */
+    getMetadata(params: AudioPlayerDefaultParams): Promise<{
+        albumTitle: string;
+        artistName: string;
+        friendlyTitle: string;
+        artworkSource: string;
+    }>;
+
+    /**
      * Destroy all resources for the audio source.
      * The audio source with `useForNotification = true` must be destroyed last.
      *

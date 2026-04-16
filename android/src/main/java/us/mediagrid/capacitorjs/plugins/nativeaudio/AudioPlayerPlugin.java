@@ -438,6 +438,28 @@ public class AudioPlayerPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void getMetadata(PluginCall call) {
+        try {
+            if (!audioSourceExists("getMetadata", call)) {
+                return;
+            }
+
+            AudioSource audioSource = audioSources.get(audioId(call));
+            AudioMetadata metadata = audioSource.audioMetadata;
+
+            JSObject result = new JSObject();
+            result.put("albumTitle", metadata.albumTitle != null ? metadata.albumTitle : "");
+            result.put("artistName", metadata.artistName != null ? metadata.artistName : "");
+            result.put("friendlyTitle", metadata.songTitle != null ? metadata.songTitle : "");
+            result.put("artworkSource", metadata.artworkSource != null ? metadata.artworkSource : "");
+
+            call.resolve(result);
+        } catch (Exception ex) {
+            call.reject("There was an issue getting the metadata.", ex);
+        }
+    }
+
+    @PluginMethod
     public void destroy(PluginCall call) {
         try {
             if (!audioSourceExists("destroy", call)) {

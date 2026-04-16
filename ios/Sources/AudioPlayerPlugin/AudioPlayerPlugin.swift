@@ -21,6 +21,7 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "setVolume", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setRate", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "isPlaying", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getMetadata", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "destroy", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "onAppGainsFocus", returnType: CAPPluginReturnCallback),
         CAPPluginMethod(name: "onAppLosesFocus", returnType: CAPPluginReturnCallback),
@@ -306,10 +307,6 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
 
             audioSource.stop()
 
-            if audioSource.useForNotification {
-                try audioSession.setActive(false)
-            }
-
             call.resolve()
         } catch AudioPlayerError.missingAudioSource {
             return
@@ -375,6 +372,25 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
         } catch {
             call.reject(
                 "There was an issue getting the playing status of the audio.",
+                nil,
+                error
+            )
+        }
+    }
+
+    @objc func getMetadata(_ call: CAPPluginCall) {
+        do {
+            let metadata = try getAudioSource(
+                methodName: "getMetadata",
+                call: call
+            ).getMetadata()
+
+            call.resolve(metadata)
+        } catch AudioPlayerError.missingAudioSource {
+            return
+        } catch {
+            call.reject(
+                "There was an issue getting the metadata.",
                 nil,
                 error
             )

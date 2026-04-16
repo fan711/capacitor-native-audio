@@ -193,9 +193,7 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
         }
 
         isPaused = false
-        setNowPlayingPlaybackState(state: .stopped)
-        removeRemoteTransportControls()
-        removeNowPlaying()
+        setNowPlayingPlaybackState(state: .paused)
         audioMetadata.stopUpdater()
     }
 
@@ -225,6 +223,15 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
 
     func setOnPlaybackStatusChange(callbackId: String) {
         onPlaybackStatusChangeCallbackId = callbackId
+    }
+
+    func getMetadata() -> [String: String] {
+        return [
+            "albumTitle": audioMetadata.albumTitle,
+            "artistName": audioMetadata.artistName,
+            "friendlyTitle": audioMetadata.songTitle,
+            "artworkSource": audioMetadata.artworkSource
+        ]
     }
 
     func isPlaying() -> Bool {

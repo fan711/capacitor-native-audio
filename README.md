@@ -127,6 +127,7 @@ The update interval starts when the audio is played or un-paused and stops when 
 * [`setVolume(...)`](#setvolume)
 * [`setRate(...)`](#setrate)
 * [`isPlaying(...)`](#isplaying)
+* [`getMetadata(...)`](#getmetadata)
 * [`destroy(...)`](#destroy)
 * [`onAppGainsFocus(...)`](#onappgainsfocus)
 * [`onAppLosesFocus(...)`](#onapplosesfocus)
@@ -398,6 +399,25 @@ Wether or not the audio source is currently playing.
 **Returns:** <code>Promise&lt;{ isPlaying: boolean; }&gt;</code>
 
 **Since:** 1.0.0
+
+--------------------
+
+
+### getMetadata(...)
+
+```typescript
+getMetadata(params: AudioPlayerDefaultParams) => Promise<{ albumTitle: string; artistName: string; friendlyTitle: string; artworkSource: string; }>
+```
+
+Get the current metadata for the audio source.
+
+| Param        | Type                                                                          |
+| ------------ | ----------------------------------------------------------------------------- |
+| **`params`** | <code><a href="#audioplayerdefaultparams">AudioPlayerDefaultParams</a></code> |
+
+**Returns:** <code>Promise&lt;{ albumTitle: string; artistName: string; friendlyTitle: string; artworkSource: string; }&gt;</code>
+
+**Since:** 3.1.0
 
 --------------------
 

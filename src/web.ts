@@ -71,6 +71,12 @@ export class AudioPlayerWeb extends WebPlugin implements AudioPlayerPlugin {
         throw this.unimplemented('Not implemented on web.');
     }
 
+    getMetadata(
+        params: AudioPlayerDefaultParams,
+    ): Promise<{ albumTitle: string; artistName: string; friendlyTitle: string; artworkSource: string }> {
+        throw this.unimplemented('Not implemented on web.');
+    }
+
     destroy(params: AudioPlayerDefaultParams): Promise<void> {
         throw this.unimplemented('Not implemented on web.');
     }
