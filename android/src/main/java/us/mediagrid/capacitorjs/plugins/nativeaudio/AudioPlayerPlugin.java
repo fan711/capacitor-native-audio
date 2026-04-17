@@ -716,10 +716,16 @@ public class AudioPlayerPlugin extends Plugin {
             try {
                 callback.run();
             } catch (Exception ex) {
+                Log.e(
+                    TAG,
+                    String.format("Looper error in method %s", methodName),
+                    ex
+                );
                 call.reject(
                     String.format(
-                        "There was an issue posting to the looper for method %s",
-                        methodName
+                        "There was an issue posting to the looper for method %s: %s",
+                        methodName,
+                        ex.getMessage()
                     ),
                     ex
                 );
