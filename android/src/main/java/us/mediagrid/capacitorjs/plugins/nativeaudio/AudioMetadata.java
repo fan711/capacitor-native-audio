@@ -113,32 +113,32 @@ public class AudioMetadata {
 
         pluginOwner.executorService.submit(() -> {
             try {
-                if (!makeUpdateRequest()) {
-                    return;
-                }
+                if (makeUpdateRequest()) {
+                    if (updateCallback != null) {
+                        // Updating the MediaController needs to be on the main thread
+                        new Handler(Looper.getMainLooper()).post(() -> {
+                            updateCallback.run();
+                        });
+                    }
 
-                if (updateCallback != null) {
-                    // Updating the MediaController needs to be on the main thread
-                    new Handler(Looper.getMainLooper()).post(() -> {
-                        updateCallback.run();
-                    });
-                }
+                    if (onMetadataUpdateCallbackId != null) {
+                        PluginCall call = pluginOwner
+                            .getBridge()
+                            .getSavedCall(onMetadataUpdateCallbackId);
 
-                if (onMetadataUpdateCallbackId != null) {
-                    PluginCall call = pluginOwner
-                        .getBridge()
-                        .getSavedCall(onMetadataUpdateCallbackId);
-
-                    if (call != null) {
-                        call.resolve(updateFullResponse);
+                        if (call != null) {
+                            call.resolve(updateFullResponse);
+                        }
                     }
                 }
             } catch (Exception ex) {
                 Log.e(TAG, "There was an error running the metadata update", ex);
-            }
-
-            if (requeueCallback != null) {
-                requeueCallback.run();
+            } finally {
+                // Always requeue — a single failed poll (e.g. 404 during stream
+                // startup race) must not kill the poller permanently.
+                if (requeueCallback != null) {
+                    requeueCallback.run();
+                }
             }
         });
     }
