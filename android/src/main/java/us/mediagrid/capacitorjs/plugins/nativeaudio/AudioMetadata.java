@@ -100,6 +100,17 @@ public class AudioMetadata {
         updateHandler.removeCallbacks(updateRunner);
         updateHandler = null;
         updateRunner = null;
+
+        // One delayed final poll so the OS audio controls catch up to the
+        // server's post-disconnect state (e.g. soundz-good returning channel
+        // metadata after the stream connection closes and Deregister fires).
+        // Without this, the lockscreen retains the last in-stream track.
+        if (hasUpdateUrl()) {
+            new Handler(Looper.getMainLooper()).postDelayed(
+                () -> updateMetadataByUrl(null),
+                2000
+            );
+        }
     }
 
     public boolean hasUpdateUrl() {

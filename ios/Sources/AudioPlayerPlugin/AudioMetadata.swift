@@ -89,6 +89,16 @@ public class AudioMetadata {
 
         updateHandler.cancel()
         updateHandler = nil
+
+        // One delayed final poll so the OS audio controls catch up to the
+        // server's post-disconnect state (e.g. soundz-good returning channel
+        // metadata after the stream connection closes and Deregister fires).
+        // Without this, the lockscreen retains the last in-stream track.
+        if hasUpdateUrl() {
+            DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 2.0) {
+                self.updateMetadataByUrl()
+            }
+        }
     }
 
     public func hasUpdateUrl() -> Bool {

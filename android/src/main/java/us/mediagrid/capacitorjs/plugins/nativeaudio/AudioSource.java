@@ -144,9 +144,13 @@ public class AudioSource extends Binder {
     public void stop() {
         setIsStopped();
 
+        // player.stop() (vs pause+seekToDefault) puts the player into IDLE
+        // and releases the network connection, so the next play() forces a
+        // fresh prepare()/connect — required for live streams where any
+        // buffered audio is stale and where the server-side registry needs
+        // to clear so the polling endpoint returns channel metadata.
         Player player = getPlayer();
-        player.pause();
-        player.seekToDefaultPosition();
+        player.stop();
         audioMetadata.stopUpdater();
     }
 
