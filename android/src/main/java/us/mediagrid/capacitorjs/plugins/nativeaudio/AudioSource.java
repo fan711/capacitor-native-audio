@@ -246,13 +246,26 @@ public class AudioSource extends Binder {
     }
 
     private void updateMetadata() {
-        var currentMediaItem = getPlayer().getCurrentMediaItem();
-        var newMediaItem = currentMediaItem
+        Player player = getPlayer();
+        if (player == null) {
+            return;
+        }
+
+        MediaItem currentMediaItem = player.getCurrentMediaItem();
+        if (currentMediaItem == null) {
+            // Happens during quick channel switches: the player exists but
+            // setMediaItem hasn't run yet (or the queue was cleared). The new
+            // metadata is already stored on audioMetadata and will flow through
+            // getMediaMetadata() when buildMediaItem() is next called.
+            return;
+        }
+
+        MediaItem newMediaItem = currentMediaItem
             .buildUpon()
             .setMediaMetadata(getMediaMetadata())
             .build();
 
-        getPlayer().replaceMediaItem(0, newMediaItem);
+        player.replaceMediaItem(0, newMediaItem);
     }
 
     private MediaMetadata getMediaMetadata() {
