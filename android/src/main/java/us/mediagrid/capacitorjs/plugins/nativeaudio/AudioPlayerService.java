@@ -8,6 +8,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.OptIn;
 import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.C;
+import androidx.media3.common.ForwardingPlayer;
 import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
@@ -35,7 +36,7 @@ public class AudioPlayerService extends MediaSessionService {
             PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
         );
 
-        ExoPlayer player = new ExoPlayer.Builder(this)
+        ExoPlayer exoPlayer = new ExoPlayer.Builder(this)
             .setAudioAttributes(
                 new AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
@@ -45,8 +46,31 @@ public class AudioPlayerService extends MediaSessionService {
             )
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build();
-        player.setPlayWhenReady(false);
-        mediaSession = new MediaSession.Builder(this, player)
+        exoPlayer.setPlayWhenReady(false);
+
+        // Every pause routed through this player — whether from the in-app
+        // button or the native notification/lockscreen controls — becomes a
+        // full stop() so the live-stream network connection is released.
+        // The paired play() override re-prepares from IDLE so the next play
+        // fetches the current broadcast moment rather than resuming stale
+        // buffered audio. The MediaSession stays alive, so the notification
+        // remains visible across the stop/play cycle.
+        Player sessionPlayer = new ForwardingPlayer(exoPlayer) {
+            @Override
+            public void pause() {
+                stop();
+            }
+
+            @Override
+            public void play() {
+                if (getPlaybackState() == Player.STATE_IDLE) {
+                    prepare();
+                }
+                super.play();
+            }
+        };
+
+        mediaSession = new MediaSession.Builder(this, sessionPlayer)
             .setCallback(new MediaSessionCallback(this))
             .setSessionActivity(sessionActivityPendingIntent)
             .build();

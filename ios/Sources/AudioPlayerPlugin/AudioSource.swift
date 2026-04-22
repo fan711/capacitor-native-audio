@@ -131,6 +131,21 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
     }
 
     func play() {
+        // If stop() released the player item (live-radio case — the stream
+        // connection must actually close so the next play starts from the
+        // current broadcast time, not from stale buffered audio), rebuild
+        // the player item before resuming.
+        if !loopAudio && player.currentItem == nil {
+            do {
+                playerItem = try createPlayerItem()
+                observeAudioReady()
+                player.replaceCurrentItem(with: playerItem)
+            } catch {
+                print("Error rebuilding player item: \(error)")
+                return
+            }
+        }
+
         if loopAudio {
             playerQueue.play()
         } else {
@@ -187,12 +202,22 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
         if loopAudio {
             playerQueue.pause()
             playerQueue.seek(to: getCmTime(seconds: 0))
+            isPaused = false
         } else {
+            // Release the player item so the network connection actually
+            // closes. For live radio, the next play() rebuilds the item and
+            // restarts the stream at the current broadcast position rather
+            // than resuming from buffered audio. Now Playing info and remote
+            // transport commands stay registered so the lockscreen/Control
+            // Center controls remain visible.
             player.pause()
-            player.seek(to: getCmTime(seconds: 0))
+            player.replaceCurrentItem(with: nil)
+            audioReadyObservation?.invalidate()
+            audioReadyObservation = nil
+            removeOnEndObservation()
+            isPaused = true
         }
 
-        isPaused = false
         setNowPlayingPlaybackState(state: .paused)
         audioMetadata.stopUpdater()
     }
@@ -415,7 +440,9 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
             print("Pause rate: " + String(self.player.rate))
 
             if self.isPlaying() {
-                self.pause()
+                // stop() (not pause()) so the stream connection closes and
+                // the next play restarts from the current broadcast time.
+                self.stop()
 
                 self.makePluginCall(
                     callbackId: self.onPlaybackStatusChangeCallbackId,
