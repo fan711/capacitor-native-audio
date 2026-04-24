@@ -63,13 +63,14 @@ public class AudioMetadata {
             return
         }
 
-        print("Starting metadata updater...")
-
         updateHandler = DispatchSource.makeTimerSource(
             queue: DispatchQueue.global(qos: .background)
         )
+        // 1s initial delay lets the stream warm up server-side (first
+        // handleGroupStart populates Redis) before the first poll, so the
+        // lockscreen picks up real track metadata on the very first request.
         updateHandler.schedule(
-            deadline: .now(),
+            deadline: .now() + 1.0,
             repeating: .seconds(updateInterval),
             leeway: .milliseconds(250)
         )
@@ -85,8 +86,6 @@ public class AudioMetadata {
             return
         }
 
-        print("Stopping metadata updater...")
-
         updateHandler.cancel()
         updateHandler = nil
 
@@ -95,7 +94,7 @@ public class AudioMetadata {
         // metadata after the stream connection closes and Deregister fires).
         // Without this, the lockscreen retains the last in-stream track.
         if hasUpdateUrl() {
-            DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 2.0) {
+            DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 1.0) {
                 self.updateMetadataByUrl()
             }
         }

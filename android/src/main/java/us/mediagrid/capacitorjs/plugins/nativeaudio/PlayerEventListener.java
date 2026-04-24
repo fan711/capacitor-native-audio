@@ -20,22 +20,34 @@ public class PlayerEventListener implements Listener {
 
     @Override
     public void onIsPlayingChanged(boolean isPlaying) {
-        String status = "stopped";
+        if (!audioSource.isInitialized()) {
+            makeCall(
+                audioSource.onPlaybackStatusChangeCallbackId,
+                new JSObject().put("status", "stopped")
+            );
+            return;
+        }
 
-        if (audioSource.isInitialized()) {
-            if (
-                audioSource.getPlayer().getPlaybackState() == STATE_READY &&
-                !audioSource.getPlayer().getPlayWhenReady() &&
-                !audioSource.isStopped()
-            ) {
-                status = "paused";
+        // Drive the metadata poller off the player's true state so the
+        // native notification/lockscreen pause (ForwardingPlayer.pause() ->
+        // stop()) takes the same path as the in-app stop: polling stops and
+        // the delayed one-shot resync fires. Reading audioSource.isPlaying()
+        // here would miss the native path, which never updates that field.
+        String status;
+        if (isPlaying) {
+            audioSource.setIsPlaying();
+            audioSource.audioMetadata.startUpdater();
+            status = "playing";
+        } else {
+            int state = audioSource.getPlayer().getPlaybackState();
+            if (state == STATE_READY && !audioSource.getPlayer().getPlayWhenReady()) {
                 audioSource.setIsPaused();
-                audioSource.audioMetadata.stopUpdater();
-            } else if (isPlaying || audioSource.isPlaying()) {
-                status = "playing";
-                audioSource.setIsPlaying();
-                audioSource.audioMetadata.startUpdater();
+                status = "paused";
+            } else {
+                audioSource.setIsStopped();
+                status = "stopped";
             }
+            audioSource.audioMetadata.stopUpdater();
         }
 
         makeCall(

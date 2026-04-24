@@ -77,8 +77,6 @@ public class AudioMetadata {
             return;
         }
 
-        Log.i(TAG, "Starting metadata updater...");
-
         updateHandler = new Handler(Looper.getMainLooper());
         updateRunner = new Runnable() {
             @Override
@@ -87,15 +85,16 @@ public class AudioMetadata {
             }
         };
 
-        updateHandler.post(updateRunner);
+        // 1s delay lets the stream warm up server-side (first handleGroupStart
+        // runs and populates Redis) before the first poll, so the lockscreen
+        // picks up real track metadata on the very first request.
+        updateHandler.postDelayed(updateRunner, 1000);
     }
 
     public void stopUpdater() {
         if (updateHandler == null) {
             return;
         }
-
-        Log.i(TAG, "Stopping metadata updater...");
 
         updateHandler.removeCallbacks(updateRunner);
         updateHandler = null;
@@ -108,7 +107,7 @@ public class AudioMetadata {
         if (hasUpdateUrl()) {
             new Handler(Looper.getMainLooper()).postDelayed(
                 () -> updateMetadataByUrl(null),
-                2000
+                1000
             );
         }
     }
@@ -123,6 +122,7 @@ public class AudioMetadata {
         }
 
         pluginOwner.executorService.submit(() -> {
+            Log.i(TAG, "poll firing for URL=" + updateUrl);
             try {
                 if (makeUpdateRequest()) {
                     if (updateCallback != null) {

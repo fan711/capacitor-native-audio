@@ -121,6 +121,10 @@ public class AudioSource extends Binder {
         Player player = getPlayer();
 
         if (player.getPlaybackState() == Player.STATE_IDLE) {
+            // MediaController.getCurrentMediaItem() can return null after a
+            // prior stop(); re-seat the item so the metadata poller's
+            // replaceMediaItem() has a target.
+            player.setMediaItem(buildMediaItem());
             player.prepare();
         }
 
@@ -142,6 +146,7 @@ public class AudioSource extends Binder {
     }
 
     public void stop() {
+        Log.i(TAG, "stop() entered, isPlaying=" + isPlaying);
         setIsStopped();
 
         // player.stop() (vs pause+seekToDefault) puts the player into IDLE
@@ -248,10 +253,18 @@ public class AudioSource extends Binder {
     private void updateMetadata() {
         Player player = getPlayer();
         if (player == null) {
+            Log.i(TAG, "updateMetadata called, player null=true");
             return;
         }
 
         MediaItem currentMediaItem = player.getCurrentMediaItem();
+        Log.i(
+            TAG,
+            "updateMetadata called, currentMediaItem null=" +
+            (currentMediaItem == null) +
+            ", title=" +
+            audioMetadata.songTitle
+        );
         if (currentMediaItem == null) {
             // Happens during quick channel switches: the player exists but
             // setMediaItem hasn't run yet (or the queue was cleared). The new
