@@ -1,45 +1,36 @@
 import Capacitor
 
+// AudioMetadata polls the soundz-good /metadata endpoint and exposes the
+// most recent track payload to AudioSource (for OS Now Playing display)
+// and the host plugin (for OS button enable/disable). The payload shape
+// mirrors the soundz-backend Broadcasts\CurrentTrack WebSocket message —
+// same field names, same nesting — so the in-app UI can route polling and
+// WS through one handler. Polling is internal to the plugin: nothing is
+// pushed to JS. The app reads the latest snapshot via getMetadata when it
+// foregrounds.
 public class AudioMetadata {
-    var albumTitle: String
-    var artistName: String
-    var songTitle: String
-    var artworkSource: String
+    var channelId: String = ""
+    var trackId: String = ""
+    var artist: String = ""
+    var title: String = ""
+    var album: String = ""
+    var imageUrl: String = ""
+    var link: String = ""
+    var maySkip: Bool = true
     var updateUrl: String
     var updateInterval: Int = 15
 
-    private var onMetadataUpdateCallbackId: String = ""
-
     private var updateHandler: DispatchSourceTimer!
     private var updateCallback: (() -> Void)!
-    private var updateFullResponse: [String: Any] = [:]
 
     private var pluginOwner: AudioPlayerPlugin?
 
-    public init(
-        albumTitle: String,
-        artistName: String,
-        songTitle: String,
-        artworkSource: String,
-        updateUrl: String,
-        updateInterval: Int
-    ) {
-        self.albumTitle = albumTitle
-        self.artistName = artistName
-        self.songTitle = songTitle
-        self.artworkSource = artworkSource
+    public init(updateUrl: String, updateInterval: Int) {
         self.updateUrl = updateUrl
 
         if updateInterval != -1 {
             self.updateInterval = updateInterval
         }
-    }
-
-    public func update(metadata: AudioMetadata) {
-        self.albumTitle = metadata.albumTitle
-        self.artistName = metadata.artistName
-        self.songTitle = metadata.songTitle
-        self.artworkSource = metadata.artworkSource
     }
 
     public func setPluginOwner(pluginOwner: AudioPlayerPlugin) -> Self {
@@ -52,10 +43,6 @@ public class AudioMetadata {
         self.updateCallback = callback
 
         return self
-    }
-
-    public func setOnMetadataUpdate(callbackId: String) {
-        onMetadataUpdateCallbackId = callbackId
     }
 
     public func startUpdater() {
@@ -149,23 +136,20 @@ public class AudioMetadata {
 
                 print(json)
 
-                self.updateFullResponse = json
-                self.albumTitle = json["album_title"] as? String ?? ""
-                self.artistName = json["artist_name"] as? String ?? ""
-                self.songTitle = json["song_title"] as? String ?? ""
-                self.artworkSource = json["artwork_source"] as? String ?? ""
+                self.channelId = json["channel_id"] as? String ?? ""
+                if let track = json["track"] as? [String: Any] {
+                    self.trackId = track["id"] as? String ?? ""
+                    self.artist = track["artist"] as? String ?? ""
+                    self.title = track["title"] as? String ?? ""
+                    self.album = track["album"] as? String ?? ""
+                    self.imageUrl = track["image_url"] as? String ?? ""
+                    self.link = track["link"] as? String ?? ""
+                    self.maySkip = track["may_skip"] as? Bool ?? true
+                }
             } catch {
                 print(
                     "An error occurred trying to get updated metadata: \(error.localizedDescription)"
                 )
-            }
-
-            if self.onMetadataUpdateCallbackId != "" {
-                DispatchQueue.main.async {
-                    self.pluginOwner?.bridge?.savedCall(withID: self.onMetadataUpdateCallbackId)?
-                        .resolve(self.updateFullResponse)
-                }
-
             }
 
             if self.updateCallback != nil {

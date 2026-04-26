@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Override Media3's default values.xml alias of the same name. The
+        DefaultMediaNotificationProvider initializes its smallIconResourceId
+        to R.drawable.media3_notification_small_icon, which Media3 itself
+        defines (in its res/values/values.xml) as an alias for
+        media3_icon_circular_play (the play-glyph-in-a-circle). A drawable
+        XML file with the same name in a consuming library does NOT reliably
+        win over a values.xml alias from a different library; declaring the
+        override here as an alias matches Media3's own form and resolves
+        the conflict in our favor.
+    -->
+    <drawable name="media3_notification_small_icon">@drawable/ic_status_soundz</drawable>
+</resources>

@@ -3,8 +3,13 @@ import Capacitor
 import MediaPlayer
 
 public class AudioSource: NSObject, AVAudioPlayerDelegate {
+    static let actionThumbsUp = "thumbs-up"
+    static let actionThumbsDown = "thumbs-down"
+    static let actionSkip = "skip"
+
     var id: String
     var source: String
+    var streamBaseUrl: String
     var audioMetadata: AudioMetadata
     var useForNotification: Bool
     var isBackgroundMusic: Bool
@@ -34,6 +39,7 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
         pluginOwner: AudioPlayerPlugin,
         id: String,
         source: String,
+        streamBaseUrl: String,
         audioMetadata: AudioMetadata,
         useForNotification: Bool,
         isBackgroundMusic: Bool,
@@ -46,6 +52,7 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
         self.pluginOwner = pluginOwner
         self.id = id
         self.source = source
+        self.streamBaseUrl = streamBaseUrl
         self.audioMetadata = audioMetadata
         self.useForNotification = useForNotification
         self.isBackgroundMusic = isBackgroundMusic
@@ -58,7 +65,7 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
         super.init()
 
         self.audioMetadata.setPluginOwner(pluginOwner: pluginOwner).setUpdateCallback(
-            callback: self.updateMetadata
+            callback: self.onMetadataUpdated
         )
     }
 
@@ -101,13 +108,6 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
             observeAudioReady()
             player.replaceCurrentItem(with: playerItem)
         }
-    }
-
-    func changeMetadata(metadata: AudioMetadata) {
-        audioMetadata.update(metadata: metadata)
-        nowPlayingArtwork = nil
-
-        updateMetadata()
     }
 
     func getDuration() -> TimeInterval {
@@ -164,6 +164,10 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
 
         if useForNotification {
             audioMetadata.startUpdater()
+            let cc = MPRemoteCommandCenter.shared()
+            cc.likeCommand.isEnabled = true
+            cc.dislikeCommand.isEnabled = true
+            cc.nextTrackCommand.isEnabled = audioMetadata.maySkip
         }
     }
 
@@ -178,6 +182,12 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
         setNowPlayingPlaybackState(state: .paused)
         audioMetadata.stopUpdater()
 
+        if useForNotification {
+            let cc = MPRemoteCommandCenter.shared()
+            cc.likeCommand.isEnabled = false
+            cc.dislikeCommand.isEnabled = false
+            cc.nextTrackCommand.isEnabled = false
+        }
     }
 
     func seek(timeInSeconds: Int64, fromUi: Bool = false) {
@@ -220,6 +230,13 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
 
         setNowPlayingPlaybackState(state: .paused)
         audioMetadata.stopUpdater()
+
+        if useForNotification {
+            let cc = MPRemoteCommandCenter.shared()
+            cc.likeCommand.isEnabled = false
+            cc.dislikeCommand.isEnabled = false
+            cc.nextTrackCommand.isEnabled = false
+        }
     }
 
     func setVolume(volume: Float) {
@@ -250,12 +267,18 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
         onPlaybackStatusChangeCallbackId = callbackId
     }
 
-    func getMetadata() -> [String: String] {
+    func getMetadata() -> [String: Any] {
         return [
-            "albumTitle": audioMetadata.albumTitle,
-            "artistName": audioMetadata.artistName,
-            "friendlyTitle": audioMetadata.songTitle,
-            "artworkSource": audioMetadata.artworkSource
+            "channel_id": audioMetadata.channelId,
+            "track": [
+                "id": audioMetadata.trackId,
+                "artist": audioMetadata.artist,
+                "title": audioMetadata.title,
+                "album": audioMetadata.album,
+                "image_url": audioMetadata.imageUrl,
+                "link": audioMetadata.link,
+                "may_skip": audioMetadata.maySkip
+            ] as [String: Any]
         ]
     }
 
@@ -510,6 +533,36 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
         commandCenter.skipForwardCommand.isEnabled = showSeekForward
         commandCenter.seekBackwardCommand.isEnabled = false
         commandCenter.seekForwardCommand.isEnabled = false
+
+        // likeCommand and dislikeCommand are visible only on CarPlay and
+        // Apple Watch — iPhone Lock Screen and Control Center do not render
+        // feedback buttons. nextTrackCommand is visible everywhere; we map
+        // it to "skip current track" which mirrors Player.vue's skip button.
+        commandCenter.likeCommand.localizedTitle = "Like"
+        commandCenter.likeCommand.isActive = false
+        commandCenter.likeCommand.addTarget {
+            [unowned self] _ -> MPRemoteCommandHandlerStatus in
+            self.performAction(action: AudioSource.actionThumbsUp)
+            return .success
+        }
+
+        commandCenter.dislikeCommand.localizedTitle = "Dislike"
+        commandCenter.dislikeCommand.isActive = false
+        commandCenter.dislikeCommand.addTarget {
+            [unowned self] _ -> MPRemoteCommandHandlerStatus in
+            self.performAction(action: AudioSource.actionThumbsDown)
+            return .success
+        }
+
+        commandCenter.nextTrackCommand.addTarget {
+            [unowned self] _ -> MPRemoteCommandHandlerStatus in
+            self.performAction(action: AudioSource.actionSkip)
+            return .success
+        }
+
+        commandCenter.likeCommand.isEnabled = isPlaying()
+        commandCenter.dislikeCommand.isEnabled = isPlaying()
+        commandCenter.nextTrackCommand.isEnabled = isPlaying() && audioMetadata.maySkip
     }
 
     private func removeRemoteTransportControls() {
@@ -523,12 +576,112 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
         commandCenter.pauseCommand.removeTarget(nil)
         commandCenter.skipBackwardCommand.removeTarget(nil)
         commandCenter.skipForwardCommand.removeTarget(nil)
+        commandCenter.likeCommand.removeTarget(nil)
+        commandCenter.dislikeCommand.removeTarget(nil)
+        commandCenter.nextTrackCommand.removeTarget(nil)
     }
 
-    private func updateMetadata() {
+    // performAction POSTs the listener's button press to soundz-good. On a
+    // successful skip — or downvote of a may-skip track — the player
+    // replaces its current item to flush buffered audio and reconnect to
+    // the new playlist position, mirroring Player.vue's pause/play wrap.
+    private func performAction(action: String) {
+        if streamBaseUrl.isEmpty {
+            print("performAction: no streamBaseUrl, dropping \(action)")
+            return
+        }
+        let trackId = audioMetadata.trackId
+        if trackId.isEmpty {
+            print("performAction: no current trackId, dropping \(action)")
+            return
+        }
+
+        let flushAfter = action == AudioSource.actionSkip ||
+            (action == AudioSource.actionThumbsDown && audioMetadata.maySkip)
+
+        var suffix: String
+        var bodyData: Data?
+        switch action {
+        case AudioSource.actionSkip:
+            suffix = "/skip/\(trackId)"
+            bodyData = nil
+        case AudioSource.actionThumbsUp:
+            suffix = "/vote/\(trackId)"
+            bodyData = try? JSONSerialization.data(withJSONObject: ["value": "up"])
+        case AudioSource.actionThumbsDown:
+            suffix = "/vote/\(trackId)"
+            bodyData = try? JSONSerialization.data(withJSONObject: ["value": "down"])
+        default:
+            return
+        }
+
+        guard let url = URL(string: streamBaseUrl + suffix) else {
+            print("performAction: invalid URL")
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        if let bodyData = bodyData {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = bodyData
+        }
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            if let error = error {
+                print("performAction \(action) failed: \(error)")
+                return
+            }
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                print("performAction \(action) -> non-2xx")
+                return
+            }
+            // Re-check on the main thread before flushing: if the user
+            // paused while the URLSession request was in flight,
+            // flushAndReplay would force playback to resume against their
+            // intent. The vote/skip itself is already recorded server-side;
+            // the next user-initiated play() picks up the new playlist
+            // position fresh anyway since stop() released the stream.
+            if flushAfter {
+                DispatchQueue.main.async {
+                    if self.isPlaying() {
+                        self.flushAndReplay()
+                    }
+                }
+            }
+        }.resume()
+    }
+
+    // flushAndReplay drops the buffered audio item and reconnects to /stream
+    // so the listener hears the new playlist position right after a skip or
+    // downvote-with-may_skip. stop() releases the player item; play() rebuilds
+    // and reconnects.
+    //
+    // Known: AudioMetadata.stopUpdater schedules a 1s delayed final poll
+    // before play()'s startUpdater fires its first request. The delayed
+    // poll mutates fields concurrently with the new poller, leaving a
+    // brief window of stale "between tracks" metadata on the lockscreen
+    // right after a flush. Acceptable because the next regular poll
+    // overwrites within ~10s; a real fix would cancel the delayed poll
+    // when the updater restarts.
+    private func flushAndReplay() {
+        if loopAudio {
+            return
+        }
+        stop()
+        isPaused = false
+        play()
+    }
+
+    private func onMetadataUpdated() {
         nowPlayingArtwork = nil
 
         setupNowPlaying()
+
+        if useForNotification {
+            MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = isPlaying() && audioMetadata.maySkip
+        }
     }
 
     private func setupNowPlaying() {
@@ -539,9 +692,9 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
         let nowPlayingInfoCenter = MPNowPlayingInfoCenter.default()
         var nowPlayingInfo = [String: Any]()
 
-        nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = audioMetadata.albumTitle
-        nowPlayingInfo[MPMediaItemPropertyArtist] = audioMetadata.artistName
-        nowPlayingInfo[MPMediaItemPropertyTitle] = audioMetadata.songTitle
+        nowPlayingInfo[MPMediaItemPropertyArtist] = audioMetadata.artist
+        nowPlayingInfo[MPMediaItemPropertyTitle] = audioMetadata.title
+        nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = audioMetadata.album
         nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = getDuration()
         nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] =
             getCurrentTime()
@@ -573,7 +726,7 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
             return nowPlayingArtwork
         }
 
-        if !audioMetadata.artworkSource.isEmpty {
+        if !audioMetadata.imageUrl.isEmpty {
             downloadNowPlayingIcon()
         } else {
             if let image = UIImage(named: "NowPlayingIcon") {
@@ -589,10 +742,10 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
 
     private func downloadNowPlayingIcon() {
         guard
-            var artworkSourceUrl = URL.init(string: audioMetadata.artworkSource)
+            var artworkSourceUrl = URL.init(string: audioMetadata.imageUrl)
         else {
             print(
-                "Error: artworkSource '" + audioMetadata.artworkSource
+                "Error: imageUrl '" + audioMetadata.imageUrl
                     + "' is invalid (1)"
             )
             return

@@ -50,6 +50,15 @@ public class PlayerEventListener implements Listener {
             audioSource.audioMetadata.stopUpdater();
         }
 
+        if (audioSource.useForNotification) {
+            AudioPlayerService service = audioSource.getService();
+            if (service != null) {
+                service.setCustomActionEnabled(AudioSource.ACTION_THUMBS_UP, isPlaying);
+                service.setCustomActionEnabled(AudioSource.ACTION_THUMBS_DOWN, isPlaying);
+                service.setCustomActionEnabled(AudioSource.ACTION_SKIP, isPlaying && audioSource.audioMetadata.maySkip);
+            }
+        }
+
         makeCall(
             audioSource.onPlaybackStatusChangeCallbackId,
             new JSObject().put("status", status)

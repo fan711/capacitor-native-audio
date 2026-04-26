@@ -10,15 +10,25 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.Player;
 import androidx.media3.exoplayer.ExoPlayer;
+import com.getcapacitor.JSObject;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.OutputStreamWriter;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 
 public class AudioSource extends Binder {
+
+    public static final String ACTION_THUMBS_UP = "thumbs-up";
+    public static final String ACTION_THUMBS_DOWN = "thumbs-down";
+    public static final String ACTION_SKIP = "skip";
 
     private static final String TAG = "AudioSource";
 
     public String id;
     public String source;
+    public String streamBaseUrl;
     public AudioMetadata audioMetadata;
     public boolean useForNotification;
     public boolean isBackgroundMusic;
@@ -29,6 +39,11 @@ public class AudioSource extends Binder {
     public String onEndCallbackId;
 
     private AudioPlayerPlugin pluginOwner;
+    // Set by MediaSessionCallback after the source is registered with the
+    // session (SET_AUDIO_SOURCES for the notification source, CREATE_PLAYER
+    // for non-notification sources). Null until then; nothing reads it
+    // before SET_AUDIO_SOURCES has run.
+    private AudioPlayerService service;
 
     private Player player;
     private PlayerEventListener playerEventListener;
@@ -40,6 +55,7 @@ public class AudioSource extends Binder {
         AudioPlayerPlugin pluginOwner,
         String id,
         String source,
+        String streamBaseUrl,
         AudioMetadata audioMetadata,
         boolean useForNotification,
         boolean isBackgroundMusic,
@@ -48,12 +64,13 @@ public class AudioSource extends Binder {
         this.pluginOwner = pluginOwner;
         this.id = id;
         this.source = source;
+        this.streamBaseUrl = streamBaseUrl;
         this.audioMetadata = audioMetadata;
         this.useForNotification = useForNotification;
         this.isBackgroundMusic = isBackgroundMusic;
         this.loopAudio = loopAudio;
 
-        this.audioMetadata.setPluginOwner(pluginOwner).setUpdateCallBack(this::updateMetadata);
+        this.audioMetadata.setPluginOwner(pluginOwner).setUpdateCallBack(this::onMetadataUpdated);
     }
 
     public void initialize(Context context) {
@@ -94,11 +111,6 @@ public class AudioSource extends Binder {
         player.setMediaItem(buildMediaItem());
         player.setPlayWhenReady(false);
         player.prepare();
-    }
-
-    public void changeMetadata(AudioMetadata metadata) {
-        audioMetadata.update(metadata);
-        updateMetadata();
     }
 
     public float getDuration() {
@@ -238,6 +250,14 @@ public class AudioSource extends Binder {
         return getPlayer() != null;
     }
 
+    public AudioPlayerService getService() {
+        return service;
+    }
+
+    public void setService(AudioPlayerService service) {
+        this.service = service;
+    }
+
     public MediaItem buildMediaItem() {
         return new MediaItem.Builder().setMediaMetadata(getMediaMetadata()).setUri(source).build();
     }
@@ -250,20 +270,123 @@ public class AudioSource extends Binder {
         }
     }
 
-    private void updateMetadata() {
+    // performAction POSTs the listener's button press to soundz-good. The
+    // request runs on the plugin's executor, off the Media3 main thread.
+    // On a successful skip — or downvote of a may-skip track — the player
+    // flushes its buffered audio and re-prepares so the listener hears the
+    // new playlist position immediately, matching the in-app pause/play
+    // dance in Player.vue.
+    public void performAction(String action) {
+        if (streamBaseUrl == null || streamBaseUrl.isEmpty()) {
+            Log.w(TAG, "performAction: no streamBaseUrl, dropping " + action);
+            return;
+        }
+        String trackId = audioMetadata.trackId;
+        if (trackId == null || trackId.isEmpty()) {
+            Log.w(TAG, "performAction: no current trackId, dropping " + action);
+            return;
+        }
+
+        boolean flushAfter = ACTION_SKIP.equals(action) ||
+            (ACTION_THUMBS_DOWN.equals(action) && audioMetadata.maySkip);
+
+        pluginOwner.executorService.submit(() -> {
+            String suffix;
+            String body;
+            switch (action) {
+                case ACTION_SKIP:
+                    suffix = "/skip/" + trackId;
+                    body = null;
+                    break;
+                case ACTION_THUMBS_UP:
+                    suffix = "/vote/" + trackId;
+                    body = new JSObject().put("value", "up").toString();
+                    break;
+                case ACTION_THUMBS_DOWN:
+                    suffix = "/vote/" + trackId;
+                    body = new JSObject().put("value", "down").toString();
+                    break;
+                default:
+                    Log.w(TAG, "performAction: unknown action " + action);
+                    return;
+            }
+
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL(streamBaseUrl + suffix);
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setDoOutput(body != null);
+                if (body != null) {
+                    conn.setRequestProperty("Content-Type", "application/json");
+                    try (OutputStreamWriter w = new OutputStreamWriter(conn.getOutputStream(), StandardCharsets.UTF_8)) {
+                        w.write(body);
+                    }
+                }
+                int status = conn.getResponseCode();
+                if (status < 200 || status >= 300) {
+                    Log.w(TAG, "performAction: " + action + " -> HTTP " + status);
+                    return;
+                }
+                // Re-check on the main thread before flushing: if the user
+                // paused while the HTTP request was in flight, flushAndReplay
+                // would force playback to resume against their intent. The
+                // vote/skip itself is already recorded server-side; the next
+                // user-initiated play() will pick up the new playlist
+                // position fresh anyway since pause releases the stream.
+                if (flushAfter) {
+                    new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                        if (isPlaying) {
+                            flushAndReplay();
+                        }
+                    });
+                }
+            } catch (Exception ex) {
+                Log.e(TAG, "performAction: " + action + " failed", ex);
+            } finally {
+                if (conn != null) {
+                    conn.disconnect();
+                }
+            }
+        });
+    }
+
+    // flushAndReplay drops any buffered audio and reconnects to /stream so
+    // the listener hears the new playlist position right after a skip or
+    // downvote-with-may_skip. stop()+play() reuses the existing pause-as-stop
+    // semantics on Android: the network connection is released, then play()
+    // re-prepares from IDLE.
+    //
+    // Known: AudioMetadata.stopUpdater schedules a 1s delayed final poll
+    // before play()'s startUpdater fires its first request. The delayed
+    // poll mutates fields concurrently with the new poller, leaving a
+    // brief window of stale "between tracks" metadata on the lockscreen
+    // right after a flush. Acceptable because the next regular poll
+    // overwrites within ~10s; a real fix would cancel the delayed poll
+    // when the updater restarts.
+    private void flushAndReplay() {
         Player player = getPlayer();
         if (player == null) {
-            Log.i(TAG, "updateMetadata called, player null=true");
+            return;
+        }
+        player.stop();
+        player.play();
+    }
+
+    private void onMetadataUpdated() {
+        Player player = getPlayer();
+        if (player == null) {
+            Log.i(TAG, "onMetadataUpdated called, player null=true");
             return;
         }
 
         MediaItem currentMediaItem = player.getCurrentMediaItem();
         Log.i(
             TAG,
-            "updateMetadata called, currentMediaItem null=" +
+            "onMetadataUpdated called, currentMediaItem null=" +
             (currentMediaItem == null) +
             ", title=" +
-            audioMetadata.songTitle
+            audioMetadata.title
         );
         if (currentMediaItem == null) {
             // Happens during quick channel switches: the player exists but
@@ -279,20 +402,40 @@ public class AudioSource extends Binder {
             .build();
 
         player.replaceMediaItem(0, newMediaItem);
+
+        if (useForNotification && service != null) {
+            service.setCustomActionEnabled(ACTION_SKIP, isPlaying && audioMetadata.maySkip);
+        }
+    }
+
+    public JSObject toCurrentTrackEvent() {
+        JSObject track = new JSObject();
+        track.put("id", audioMetadata.trackId);
+        track.put("artist", audioMetadata.artist);
+        track.put("title", audioMetadata.title);
+        track.put("album", audioMetadata.album);
+        track.put("image_url", audioMetadata.imageUrl);
+        track.put("link", audioMetadata.link);
+        track.put("may_skip", audioMetadata.maySkip);
+
+        JSObject result = new JSObject();
+        result.put("channel_id", audioMetadata.channelId);
+        result.put("track", track);
+        return result;
     }
 
     private MediaMetadata getMediaMetadata() {
         MediaMetadata.Builder builder = new MediaMetadata.Builder()
-            .setAlbumTitle(audioMetadata.albumTitle == null ? "" : audioMetadata.albumTitle)
-            .setArtist(audioMetadata.artistName == null ? "" : audioMetadata.artistName)
-            .setTitle(audioMetadata.songTitle == null ? "" : audioMetadata.songTitle);
+            .setArtist(audioMetadata.artist == null ? "" : audioMetadata.artist)
+            .setTitle(audioMetadata.title == null ? "" : audioMetadata.title)
+            .setAlbumTitle(audioMetadata.album == null ? "" : audioMetadata.album);
 
-        if (useForNotification && audioMetadata.artworkSource != null) {
+        if (useForNotification && audioMetadata.imageUrl != null && !audioMetadata.imageUrl.isEmpty()) {
             try {
-                if (audioMetadata.artworkSource.startsWith("https:")) {
-                    builder.setArtworkUri(Uri.parse(audioMetadata.artworkSource));
+                if (audioMetadata.imageUrl.startsWith("http")) {
+                    builder.setArtworkUri(Uri.parse(audioMetadata.imageUrl));
                 } else {
-                    int bufferLength = 4 * 0x400; // 4KB
+                    int bufferLength = 4 * 0x400;
                     byte[] buffer = new byte[bufferLength];
                     int readLength;
                     ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
@@ -300,7 +443,7 @@ public class AudioSource extends Binder {
                     InputStream inputStream = pluginOwner
                         .getContext()
                         .getAssets()
-                        .open("public/" + audioMetadata.artworkSource);
+                        .open("public/" + audioMetadata.imageUrl);
 
                     while ((readLength = inputStream.read(buffer, 0, bufferLength)) != -1) {
                         outputStream.write(buffer, 0, readLength);

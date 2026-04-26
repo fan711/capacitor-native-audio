@@ -2,6 +2,7 @@ package us.mediagrid.capacitorjs.plugins.nativeaudio;
 
 import android.app.PendingIntent;
 import android.content.Intent;
+import android.os.Bundle;
 import android.os.IBinder;
 import android.util.Log;
 import androidx.annotation.Nullable;
@@ -12,8 +13,11 @@ import androidx.media3.common.ForwardingPlayer;
 import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.session.CommandButton;
 import androidx.media3.session.MediaSession;
+import androidx.media3.session.SessionCommand;
 import androidx.media3.session.MediaSessionService;
+import com.google.common.collect.ImmutableList;
 
 public class AudioPlayerService extends MediaSessionService {
 
@@ -21,6 +25,16 @@ public class AudioPlayerService extends MediaSessionService {
     public static final String PLAYBACK_CHANNEL_ID = "playback_channel";
     private MediaSession mediaSession = null;
 
+    // The three listener-action buttons surfaced on the notification /
+    // lockscreen. Order mirrors Player.vue's button row: thumbs-up,
+    // thumbs-down, skip. The buttons live for the lifetime of the service;
+    // setCustomActionEnabled rebuilds individual buttons in place to flip
+    // their enabled flag (CommandButton is immutable).
+    private CommandButton thumbsUpButton;
+    private CommandButton thumbsDownButton;
+    private CommandButton skipButton;
+
+    @OptIn(markerClass = UnstableApi.class)
     @Override
     public void onCreate() {
         Log.i(TAG, "Service being created");
@@ -70,10 +84,91 @@ public class AudioPlayerService extends MediaSessionService {
             }
         };
 
+        thumbsUpButton = buildCommandButton(
+            MediaSessionCallback.CUSTOM_THUMBS_UP,
+            R.drawable.ic_action_thumb_up,
+            "Thumbs up",
+            true
+        );
+        thumbsDownButton = buildCommandButton(
+            MediaSessionCallback.CUSTOM_THUMBS_DOWN,
+            R.drawable.ic_action_thumb_down,
+            "Thumbs down",
+            true
+        );
+        skipButton = buildCommandButton(
+            MediaSessionCallback.CUSTOM_SKIP,
+            R.drawable.ic_action_skip_next,
+            "Skip",
+            true
+        );
+        // Without explicit slot hints Media3 defaults the first custom
+        // button to SLOT_BACK (left of play/pause). Pin all three to
+        // forward slots so the row reads play/pause | thumbs-up |
+        // thumbs-down | skip from the play button outward.
+
         mediaSession = new MediaSession.Builder(this, sessionPlayer)
             .setCallback(new MediaSessionCallback(this))
             .setSessionActivity(sessionActivityPendingIntent)
+            .setCustomLayout(getCustomLayout())
             .build();
+
+        setMediaNotificationProvider(new SoundzNotificationProvider(this));
+        // Note: the small status-bar icon is overridden by providing a
+        // drawable named `media3_notification_small_icon` in the plugin's
+        // res/drawable, which the Media3 default provider picks up.
+    }
+
+    @OptIn(markerClass = UnstableApi.class)
+    private CommandButton buildCommandButton(String sessionCommand, int iconRes, String displayName, boolean enabled) {
+        // All three listener-action buttons request the same slot list so
+        // none of them lands in SLOT_BACK (left of play/pause). The order
+        // they appear in setCustomLayout determines which one wins
+        // SLOT_FORWARD_SECONDARY; the rest spill into SLOT_OVERFLOW (the
+        // ⋮ menu).
+        int[] slots = new int[] { CommandButton.SLOT_FORWARD_SECONDARY, CommandButton.SLOT_OVERFLOW };
+        return new CommandButton.Builder()
+            .setSessionCommand(new SessionCommand(sessionCommand, new Bundle()))
+            .setIconResId(iconRes)
+            .setDisplayName(displayName)
+            .setSlots(slots)
+            .setEnabled(enabled)
+            .build();
+    }
+
+    @OptIn(markerClass = UnstableApi.class)
+    public ImmutableList<CommandButton> getCustomLayout() {
+        return ImmutableList.of(thumbsUpButton, thumbsDownButton, skipButton);
+    }
+
+    // setCustomActionEnabled flips the enabled flag for one of the three
+    // listener-action buttons and pushes the rebuilt layout to all
+    // controllers. CommandButton is immutable so we reconstruct the affected
+    // button in place.
+    @OptIn(markerClass = UnstableApi.class)
+    public void setCustomActionEnabled(String action, boolean enabled) {
+        switch (action) {
+            case AudioSource.ACTION_THUMBS_UP:
+                if (thumbsUpButton.isEnabled == enabled) return;
+                thumbsUpButton = buildCommandButton(
+                    MediaSessionCallback.CUSTOM_THUMBS_UP, R.drawable.ic_action_thumb_up, "Thumbs up", enabled);
+                break;
+            case AudioSource.ACTION_THUMBS_DOWN:
+                if (thumbsDownButton.isEnabled == enabled) return;
+                thumbsDownButton = buildCommandButton(
+                    MediaSessionCallback.CUSTOM_THUMBS_DOWN, R.drawable.ic_action_thumb_down, "Thumbs down", enabled);
+                break;
+            case AudioSource.ACTION_SKIP:
+                if (skipButton.isEnabled == enabled) return;
+                skipButton = buildCommandButton(
+                    MediaSessionCallback.CUSTOM_SKIP, R.drawable.ic_action_skip_next, "Skip", enabled);
+                break;
+            default:
+                return;
+        }
+        if (mediaSession != null) {
+            mediaSession.setCustomLayout(getCustomLayout());
+        }
     }
 
     @Override
@@ -125,6 +220,12 @@ public class AudioPlayerService extends MediaSessionService {
         mediaSession = null;
 
         super.onDestroy();
+    }
+
+    public AudioSource getNotificationAudioSource() {
+        AudioSources sources = getAudioSourcesFromMediaSession();
+        if (sources == null) return null;
+        return sources.forNotification();
     }
 
     @OptIn(markerClass = UnstableApi.class)

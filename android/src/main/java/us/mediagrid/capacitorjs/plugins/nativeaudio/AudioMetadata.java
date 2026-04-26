@@ -4,56 +4,52 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import com.getcapacitor.JSObject;
-import com.getcapacitor.PluginCall;
 import com.getcapacitor.plugin.util.HttpRequestHandler;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 
+// AudioMetadata polls the soundz-good /metadata endpoint and exposes the
+// most recent track payload to AudioSource (for OS now-playing display) and
+// the host service (for OS button enable/disable). The payload shape mirrors
+// the soundz-backend Broadcasts\CurrentTrack WebSocket message — same field
+// names, same nesting — so the in-app UI can route polling and WS through
+// one handler. This polling is internal to the plugin: nothing is pushed to
+// JS. The app reads the latest snapshot via AudioPlayerPlugin.getMetadata
+// when it foregrounds.
 public class AudioMetadata {
 
     private static final String TAG = "AudioMetadata";
 
-    public String albumTitle;
-    public String artistName;
-    public String songTitle;
-    public String artworkSource;
+    public String channelId = "";
+    public String trackId = "";
+    public String artist = "";
+    public String title = "";
+    public String album = "";
+    // Default to the bundled favicon as the lockscreen artwork until the
+    // first /metadata poll lands a real image_url. Lets us see whether
+    // the "play-glyph in a circle" the OS shows is in fact the
+    // MediaMetadata artwork (it should swap for the favicon here) or a
+    // separate framework icon we haven't reached yet.
+    public String imageUrl = "favicon.png";
+    public String link = "";
+    public boolean maySkip = true;
+
     public String updateUrl;
     public Integer updateInterval = 15;
-
-    private String onMetadataUpdateCallbackId;
 
     private Handler updateHandler = null;
     private Runnable updateRunner = null;
     private Runnable updateCallback = null;
-    private JSObject updateFullResponse;
 
     private AudioPlayerPlugin pluginOwner;
 
-    AudioMetadata(
-        String albumTitle,
-        String artistName,
-        String songTitle,
-        String artworkSource,
-        String updateUrl,
-        Integer updateInterval
-    ) {
-        this.albumTitle = albumTitle;
-        this.artistName = artistName;
-        this.songTitle = songTitle;
-        this.artworkSource = artworkSource;
+    AudioMetadata(String updateUrl, Integer updateInterval) {
         this.updateUrl = updateUrl;
 
         if (updateInterval != null) {
             this.updateInterval = updateInterval;
         }
-    }
-
-    public void update(AudioMetadata metadata) {
-        albumTitle = metadata.albumTitle;
-        artistName = metadata.artistName;
-        songTitle = metadata.songTitle;
-        artworkSource = metadata.artworkSource;
     }
 
     public AudioMetadata setPluginOwner(AudioPlayerPlugin plugin) {
@@ -66,10 +62,6 @@ public class AudioMetadata {
         updateCallback = callback;
 
         return this;
-    }
-
-    public void setOnMetadataUpdate(String callbackId) {
-        onMetadataUpdateCallbackId = callbackId;
     }
 
     public void startUpdater() {
@@ -113,7 +105,7 @@ public class AudioMetadata {
     }
 
     public boolean hasUpdateUrl() {
-        return updateUrl != null && updateUrl != "";
+        return updateUrl != null && !updateUrl.isEmpty();
     }
 
     public void updateMetadataByUrl(Runnable requeueCallback) {
@@ -130,16 +122,6 @@ public class AudioMetadata {
                         new Handler(Looper.getMainLooper()).post(() -> {
                             updateCallback.run();
                         });
-                    }
-
-                    if (onMetadataUpdateCallbackId != null) {
-                        PluginCall call = pluginOwner
-                            .getBridge()
-                            .getSavedCall(onMetadataUpdateCallbackId);
-
-                        if (call != null) {
-                            call.resolve(updateFullResponse);
-                        }
                     }
                 }
             } catch (Exception ex) {
@@ -181,11 +163,18 @@ public class AudioMetadata {
 
                 Log.i(TAG, json.toString());
 
-                updateFullResponse = json;
-                albumTitle = json.getString("album_title");
-                artistName = json.getString("artist_name");
-                songTitle = json.getString("song_title");
-                artworkSource = json.getString("artwork_source");
+                channelId = stringOrEmpty(json.getString("channel_id"));
+                JSObject track = json.getJSObject("track");
+                if (track != null) {
+                    trackId = stringOrEmpty(track.getString("id"));
+                    artist = stringOrEmpty(track.getString("artist"));
+                    title = stringOrEmpty(track.getString("title"));
+                    album = stringOrEmpty(track.getString("album"));
+                    imageUrl = stringOrEmpty(track.getString("image_url"));
+                    link = stringOrEmpty(track.getString("link"));
+                    Boolean ms = track.getBool("may_skip");
+                    maySkip = ms == null ? true : ms;
+                }
 
                 return true;
             }
@@ -198,5 +187,9 @@ public class AudioMetadata {
         }
 
         return false;
+    }
+
+    private static String stringOrEmpty(String s) {
+        return s == null ? "" : s;
     }
 }

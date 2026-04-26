@@ -9,33 +9,18 @@ export interface AudioPlayerDefaultParams {
 
 export interface AudioPlayerPrepareParams extends AudioPlayerDefaultParams {
     /**
-     * A URI for the audio file to play
+     * Soundz-good base URL for this listener, e.g.
+     * `https://stream.example/streams/app/{channelId}/{clientId}`. The plugin
+     * derives every URL it needs from this base:
      *
-     * @example A public web source: https://example.com/example.mp3
-     * @since 1.0.0
-     */
-    audioSource: string;
-
-    /**
-     * The album title/name of the audio file to be used on the notification
+     *   - `${streamBaseUrl}/stream` — the audio stream
+     *   - `${streamBaseUrl}/metadata` — track metadata polling
+     *   - `${streamBaseUrl}/vote/{trackId}` — thumbs up/down
+     *   - `${streamBaseUrl}/skip/{trackId}` — skip current track
      *
-     * @since 2.1.0
+     * @since 4.0.0
      */
-    albumTitle?: string;
-
-    /**
-     * The artist name of the audio file to be used on the notification
-     *
-     * @since 2.1.0
-     */
-    artistName?: string;
-
-    /**
-     * The title/name of the audio file to be used on the notification
-     *
-     * @since 1.0.0
-     */
-    friendlyTitle: string;
+    streamBaseUrl: string;
 
     /**
      * Whether to use this audio file for the notification.
@@ -47,22 +32,6 @@ export interface AudioPlayerPrepareParams extends AudioPlayerDefaultParams {
      * @since 1.0.0
      */
     useForNotification: boolean;
-
-    /**
-     * A URI for the album art image to display on the Android/iOS notification.
-     *
-     * Can also be an in-app source. Pulls from `android/app/src/assets/public` and `ios/App/App/public`.
-     * If using [Vite](https://vitejs.dev/guide/assets.html#the-public-directory),
-     * you would put the image in your `public` folder and the build process will copy to `dist`
-     * which in turn will be copied to the Android/iOS assets by Capacitor.
-     *
-     * A PNG is the best option with square dimensions. 1200 x 1200px is a good option.
-     *
-     * @example A public web source: https://example.com/artwork.png
-     * @example An in-app source: images/artwork.png
-     * @since 1.0.0
-     */
-    artworkSource?: string;
 
     /**
      * Is this audio for background music/audio.
@@ -120,15 +89,6 @@ export interface AudioPlayerPrepareParams extends AudioPlayerDefaultParams {
     seekForwardTime?: number;
 
     /**
-     * The URL to fetch metadata updates at the specified interval. Typically used for a radio stream.
-     * See the section on [Metadata Updates](#metadata-updates) for more info.
-     * Only has affect when `useForNotification = true`.
-     *
-     * @since 2.2.0
-     */
-    metadataUpdateUrl?: string;
-
-    /**
      * The interval to fetch metadata updates in seconds.
      *
      * @default 15
@@ -150,34 +110,22 @@ export interface AudioPlayerListenerResult {
     callbackId: string;
 }
 
-export interface AudioPlayerMetadataUpdateListenerEvent {
-    /**
-     * The album title
-     *
-     * @since 2.2.0
-     */
-    album_title: string;
-
-    /**
-     * The artist name
-     *
-     * @since 2.2.0
-     */
-    artist_name: string;
-
-    /**
-     * The song title
-     *
-     * @since 2.2.0
-     */
-    song_title: string;
-
-    /**
-     * A URI for the album art image to display on the Android/iOS notification.
-     *
-     * @since 2.2.0
-     */
-    artwork_source: string;
+/**
+ * Track metadata payload mirroring the soundz-backend
+ * `Broadcasts\CurrentTrack` WebSocket message. Returned by `getMetadata` and
+ * consumed by the in-app UI alongside the WebSocket-driven live updates.
+ */
+export interface CurrentTrackEvent {
+    channel_id: string;
+    track: {
+        id: string;
+        artist: string;
+        title: string;
+        album: string;
+        image_url: string;
+        link: string;
+        may_skip: boolean;
+    };
 }
 
 export interface AudioPlayerPlugin {
@@ -209,23 +157,10 @@ export interface AudioPlayerPlugin {
     changeAudioSource(params: AudioPlayerDefaultParams & { source: string }): Promise<void>;
 
     /**
-     * Change the associated metadata of an existing audio source
-     *
-     * @since 1.1.0
-     */
-    changeMetadata(
-        params: AudioPlayerDefaultParams & {
-            albumTitle?: string;
-            artistName?: string;
-            friendlyTitle?: string;
-            artworkSource?: string;
-        },
-    ): Promise<void>;
-
-    /**
-     * Update metadata from Update URL
-     *
-     * This runs async on the native side. Use the `onMetadataUpdate` listener to get the updated metadata.
+     * Trigger a one-shot metadata refresh from the soundz-good /metadata
+     * endpoint. The plugin updates its own state (OS now-playing, button
+     * enable flags); the JS layer should use `getMetadata` to read the
+     * result, since the plugin no longer pushes metadata events to JS.
      *
      * @since 2.2.0
      */
@@ -300,16 +235,14 @@ export interface AudioPlayerPlugin {
     isPlaying(params: AudioPlayerDefaultParams): Promise<{ isPlaying: boolean }>;
 
     /**
-     * Get the current metadata for the audio source.
+     * Get the current track metadata for the audio source. Shape mirrors
+     * the soundz-backend `Broadcasts\CurrentTrack` WebSocket payload, so
+     * the in-app UI can route this and the WebSocket message through one
+     * handler.
      *
      * @since 3.1.0
      */
-    getMetadata(params: AudioPlayerDefaultParams): Promise<{
-        albumTitle: string;
-        artistName: string;
-        friendlyTitle: string;
-        artworkSource: string;
-    }>;
+    getMetadata(params: AudioPlayerDefaultParams): Promise<CurrentTrackEvent>;
 
     /**
      * Destroy all resources for the audio source.
@@ -373,17 +306,5 @@ export interface AudioPlayerPlugin {
     onPlaybackStatusChange(
         params: AudioPlayerListenerParams,
         callback: (result: { status: 'playing' | 'paused' | 'stopped' }) => void,
-    ): Promise<AudioPlayerListenerResult>;
-
-    /**
-     * Registers a callback for when metadata updates from a URL.
-     *
-     * It will return all data from the URL response, not just the required data. So you could have the metadata endpoint return other data that you may need.
-     *
-     * @since 2.2.0
-     */
-    onMetadataUpdate(
-        params: AudioPlayerListenerParams,
-        callback: (result: AudioPlayerMetadataUpdateListenerEvent) => void,
     ): Promise<AudioPlayerListenerResult>;
 }

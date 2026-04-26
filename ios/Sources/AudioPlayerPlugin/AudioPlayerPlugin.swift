@@ -10,7 +10,6 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "create", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "initialize", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "changeAudioSource", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "changeMetadata", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "updateMetadata", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getDuration", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getCurrentTime", returnType: CAPPluginReturnPromise),
@@ -27,8 +26,7 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "onAppLosesFocus", returnType: CAPPluginReturnCallback),
         CAPPluginMethod(name: "onAudioReady", returnType: CAPPluginReturnCallback),
         CAPPluginMethod(name: "onAudioEnd", returnType: CAPPluginReturnCallback),
-        CAPPluginMethod(name: "onPlaybackStatusChange", returnType: CAPPluginReturnCallback),
-        CAPPluginMethod(name: "onMetadataUpdate", returnType: CAPPluginReturnCallback)
+        CAPPluginMethod(name: "onPlaybackStatusChange", returnType: CAPPluginReturnCallback)
     ]
 
     let audioSession = AVAudioSession.sharedInstance()
@@ -80,23 +78,19 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
                 return
             }
 
-            guard let source = call.getString("audioSource") else {
+            guard let streamBaseUrl = call.getString("streamBaseUrl"),
+                  !streamBaseUrl.isEmpty
+            else {
                 throw AudioPlayerError.invalidPath
-            }
-            guard let friendlyTitle = call.getString("friendlyTitle") else {
-                throw AudioPlayerError.invalidFriendlyName
             }
 
             let audioSource = AudioSource(
                 pluginOwner: self,
                 id: sourceId,
-                source: source,
+                source: streamBaseUrl + "/stream",
+                streamBaseUrl: streamBaseUrl,
                 audioMetadata: AudioMetadata(
-                    albumTitle: call.getString("albumTitle", ""),
-                    artistName: call.getString("artistName", ""),
-                    songTitle: friendlyTitle,
-                    artworkSource: call.getString("artworkSource", ""),
-                    updateUrl: call.getString("metadataUpdateUrl", ""),
+                    updateUrl: streamBaseUrl + "/metadata",
                     updateInterval: call.getInt("metadataUpdateInterval", -1)
                 ),
                 useForNotification: call.getBool("useForNotification", false),
@@ -164,32 +158,6 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
         } catch {
             call.reject(
                 "There was an issue changing the audio source.",
-                nil,
-                error
-            )
-        }
-    }
-
-    @objc func changeMetadata(_ call: CAPPluginCall) {
-        do {
-            try getAudioSource(methodName: "changeMetadata", call: call)
-                .changeMetadata(
-                    metadata: AudioMetadata(
-                        albumTitle: call.getString("albumTitle", ""),
-                        artistName: call.getString("artistName", ""),
-                        songTitle: call.getString("friendlyTitle", ""),
-                        artworkSource: call.getString("artworkSource", ""),
-                        updateUrl: "",
-                        updateInterval: -1
-                    )
-                )
-
-            call.resolve()
-        } catch AudioPlayerError.missingAudioSource {
-            return
-        } catch {
-            call.reject(
-                "There was an issue changing the metadata.",
                 nil,
                 error
             )
@@ -509,25 +477,6 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
         } catch {
             call.reject(
                 "There was an issue initializing playback status change.",
-                nil,
-                error
-            )
-        }
-    }
-
-    @objc func onMetadataUpdate(_ call: CAPPluginCall) {
-        call.keepAlive = true
-        bridge?.saveCall(call)
-
-        do {
-            try getAudioSource(methodName: "onMetadataUpdate", call: call)
-                .audioMetadata
-                .setOnMetadataUpdate(callbackId: call.callbackId)
-        } catch AudioPlayerError.missingAudioSource {
-            return
-        } catch {
-            call.reject(
-                "There was an issue initializing metadata update.",
                 nil,
                 error
             )

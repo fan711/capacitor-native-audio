@@ -62,16 +62,19 @@ public class AudioPlayerPlugin extends Plugin {
                 return;
             }
 
+            String streamBaseUrl = call.getString("streamBaseUrl");
+            if (streamBaseUrl == null || streamBaseUrl.isEmpty()) {
+                call.reject("streamBaseUrl is required.");
+                return;
+            }
+
             AudioSource audioSource = new AudioSource(
                 this,
                 sourceId,
-                call.getString("audioSource"),
+                streamBaseUrl + "/stream",
+                streamBaseUrl,
                 new AudioMetadata(
-                    call.getString("albumTitle"),
-                    call.getString("artistName"),
-                    call.getString("friendlyTitle"),
-                    call.getString("artworkSource"),
-                    call.getString("metadataUpdateUrl"),
+                    streamBaseUrl + "/metadata",
                     call.getInt("metadataUpdateInterval")
                 ),
                 call.getBoolean("useForNotification", false),
@@ -231,34 +234,6 @@ public class AudioPlayerPlugin extends Plugin {
             });
         } catch (Exception ex) {
             call.reject("There was an issue changing the audio source.", ex);
-        }
-    }
-
-    @PluginMethod
-    public void changeMetadata(PluginCall call) {
-        try {
-            if (!audioSourceExists("changeMetadata", call)) {
-                return;
-            }
-
-            AudioSource audioSource = audioSources.get(audioId(call));
-
-            postToLooper("changeMetadata", call, () -> {
-                audioSource.changeMetadata(
-                    new AudioMetadata(
-                        call.getString("albumTitle"),
-                        call.getString("artistName"),
-                        call.getString("friendlyTitle"),
-                        call.getString("artworkSource"),
-                        null,
-                        null
-                    )
-                );
-
-                call.resolve();
-            });
-        } catch (Exception ex) {
-            call.reject("There was an issue changing the metadata.", ex);
         }
     }
 
@@ -445,15 +420,7 @@ public class AudioPlayerPlugin extends Plugin {
             }
 
             AudioSource audioSource = audioSources.get(audioId(call));
-            AudioMetadata metadata = audioSource.audioMetadata;
-
-            JSObject result = new JSObject();
-            result.put("albumTitle", metadata.albumTitle != null ? metadata.albumTitle : "");
-            result.put("artistName", metadata.artistName != null ? metadata.artistName : "");
-            result.put("friendlyTitle", metadata.songTitle != null ? metadata.songTitle : "");
-            result.put("artworkSource", metadata.artworkSource != null ? metadata.artworkSource : "");
-
-            call.resolve(result);
+            call.resolve(audioSource.toCurrentTrackEvent());
         } catch (Exception ex) {
             call.reject("There was an issue getting the metadata.", ex);
         }
@@ -546,18 +513,6 @@ public class AudioPlayerPlugin extends Plugin {
         getBridge().saveCall(call);
 
         audioSources.get(audioId(call)).setOnPlaybackStatusChange(call.getCallbackId());
-    }
-
-    @PluginMethod(returnType = PluginMethod.RETURN_CALLBACK)
-    public void onMetadataUpdate(PluginCall call) {
-        if (!audioSourceExists("onMetadataUpdate", call)) {
-            return;
-        }
-
-        call.setKeepAlive(true);
-        getBridge().saveCall(call);
-
-        audioSources.get(audioId(call)).audioMetadata.setOnMetadataUpdate(call.getCallbackId());
     }
 
     @Override

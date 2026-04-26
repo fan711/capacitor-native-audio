@@ -116,7 +116,6 @@ The update interval starts when the audio is played or un-paused and stops when 
 * [`create(...)`](#create)
 * [`initialize(...)`](#initialize)
 * [`changeAudioSource(...)`](#changeaudiosource)
-* [`changeMetadata(...)`](#changemetadata)
 * [`updateMetadata(...)`](#updatemetadata)
 * [`getDuration(...)`](#getduration)
 * [`getCurrentTime(...)`](#getcurrenttime)
@@ -134,7 +133,6 @@ The update interval starts when the audio is played or un-paused and stops when 
 * [`onAudioReady(...)`](#onaudioready)
 * [`onAudioEnd(...)`](#onaudioend)
 * [`onPlaybackStatusChange(...)`](#onplaybackstatuschange)
-* [`onMetadataUpdate(...)`](#onmetadataupdate)
 * [Interfaces](#interfaces)
 
 </docgen-index>
@@ -203,32 +201,16 @@ that a user can choose from.
 --------------------
 
 
-### changeMetadata(...)
-
-```typescript
-changeMetadata(params: AudioPlayerDefaultParams & { albumTitle?: string; artistName?: string; friendlyTitle?: string; artworkSource?: string; }) => Promise<void>
-```
-
-Change the associated metadata of an existing audio source
-
-| Param        | Type                                                                                                                                                                          |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`params`** | <code><a href="#audioplayerdefaultparams">AudioPlayerDefaultParams</a> & { albumTitle?: string; artistName?: string; friendlyTitle?: string; artworkSource?: string; }</code> |
-
-**Since:** 1.1.0
-
---------------------
-
-
 ### updateMetadata(...)
 
 ```typescript
 updateMetadata(params: AudioPlayerDefaultParams) => Promise<void>
 ```
 
-Update metadata from Update URL
-
-This runs async on the native side. Use the `onMetadataUpdate` listener to get the updated metadata.
+Trigger a one-shot metadata refresh from the soundz-good /metadata
+endpoint. The plugin updates its own state (OS now-playing, button
+enable flags); the JS layer should use `getMetadata` to read the
+result, since the plugin no longer pushes metadata events to JS.
 
 | Param        | Type                                                                          |
 | ------------ | ----------------------------------------------------------------------------- |
@@ -406,16 +388,19 @@ Wether or not the audio source is currently playing.
 ### getMetadata(...)
 
 ```typescript
-getMetadata(params: AudioPlayerDefaultParams) => Promise<{ albumTitle: string; artistName: string; friendlyTitle: string; artworkSource: string; }>
+getMetadata(params: AudioPlayerDefaultParams) => Promise<CurrentTrackEvent>
 ```
 
-Get the current metadata for the audio source.
+Get the current track metadata for the audio source. Shape mirrors
+the soundz-backend `Broadcasts\CurrentTrack` WebSocket payload, so
+the in-app UI can route this and the WebSocket message through one
+handler.
 
 | Param        | Type                                                                          |
 | ------------ | ----------------------------------------------------------------------------- |
 | **`params`** | <code><a href="#audioplayerdefaultparams">AudioPlayerDefaultParams</a></code> |
 
-**Returns:** <code>Promise&lt;{ albumTitle: string; artistName: string; friendlyTitle: string; artworkSource: string; }&gt;</code>
+**Returns:** <code>Promise&lt;<a href="#currenttrackevent">CurrentTrackEvent</a>&gt;</code>
 
 **Since:** 3.1.0
 
@@ -546,49 +531,22 @@ It may be fixed in the future for Android if a solution is found so don't rely o
 --------------------
 
 
-### onMetadataUpdate(...)
-
-```typescript
-onMetadataUpdate(params: AudioPlayerListenerParams, callback: (result: AudioPlayerMetadataUpdateListenerEvent) => void) => Promise<AudioPlayerListenerResult>
-```
-
-Registers a callback for when metadata updates from a URL.
-
-It will return all data from the URL response, not just the required data. So you could have the metadata endpoint return other data that you may need.
-
-| Param          | Type                                                                                                                           |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| **`params`**   | <code><a href="#audioplayerlistenerparams">AudioPlayerListenerParams</a></code>                                                |
-| **`callback`** | <code>(result: <a href="#audioplayermetadataupdatelistenerevent">AudioPlayerMetadataUpdateListenerEvent</a>) =&gt; void</code> |
-
-**Returns:** <code>Promise&lt;<a href="#audioplayerlistenerresult">AudioPlayerListenerResult</a>&gt;</code>
-
-**Since:** 2.2.0
-
---------------------
-
-
 ### Interfaces
 
 
 #### AudioPlayerPrepareParams
 
-| Prop                         | Type                 | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Default            | Since |
-| ---------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ----- |
-| **`audioSource`**            | <code>string</code>  | A URI for the audio file to play                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |                    | 1.0.0 |
-| **`albumTitle`**             | <code>string</code>  | The album title/name of the audio file to be used on the notification                                                                                                                                                                                                                                                                                                                                                                                                                                    |                    | 2.1.0 |
-| **`artistName`**             | <code>string</code>  | The artist name of the audio file to be used on the notification                                                                                                                                                                                                                                                                                                                                                                                                                                         |                    | 2.1.0 |
-| **`friendlyTitle`**          | <code>string</code>  | The title/name of the audio file to be used on the notification                                                                                                                                                                                                                                                                                                                                                                                                                                          |                    | 1.0.0 |
-| **`useForNotification`**     | <code>boolean</code> | Whether to use this audio file for the notification. This is considered the primary audio to play. It must be created first and you may only have one at a time.                                                                                                                                                                                                                                                                                                                                         | <code>false</code> | 1.0.0 |
-| **`artworkSource`**          | <code>string</code>  | A URI for the album art image to display on the Android/iOS notification. Can also be an in-app source. Pulls from `android/app/src/assets/public` and `ios/App/App/public`. If using [Vite](https://vitejs.dev/guide/assets.html#the-public-directory), you would put the image in your `public` folder and the build process will copy to `dist` which in turn will be copied to the Android/iOS assets by Capacitor. A PNG is the best option with square dimensions. 1200 x 1200px is a good option. |                    | 1.0.0 |
-| **`isBackgroundMusic`**      | <code>boolean</code> | Is this audio for background music/audio. Should not be `true` when `useForNotification = true`.                                                                                                                                                                                                                                                                                                                                                                                                         | <code>false</code> | 1.0.0 |
-| **`loop`**                   | <code>boolean</code> | Whether or not to loop other audio like background music while the primary audio (`useForNotification = true`) is playing.                                                                                                                                                                                                                                                                                                                                                                               | <code>false</code> | 1.0.0 |
-| **`showSeekBackward`**       | <code>boolean</code> | Whether or not to show the seek backward button on the OS's notification. Only has affect when `useForNotification = true`.                                                                                                                                                                                                                                                                                                                                                                              | <code>true</code>  | 1.2.0 |
-| **`showSeekForward`**        | <code>boolean</code> | Whether or not to show the seek forward button on the OS's notification. Only has affect when `useForNotification = true`.                                                                                                                                                                                                                                                                                                                                                                               | <code>true</code>  | 1.2.0 |
-| **`seekBackwardTime`**       | <code>number</code>  | Time to seek backward in seconds on the OS's notification. Only has affect when `showSeekBackward = true`.                                                                                                                                                                                                                                                                                                                                                                                               | <code>5</code>     | 2.3.0 |
-| **`seekForwardTime`**        | <code>number</code>  | Time to seek forward in seconds on the OS's notification. Only has affect when `showSeekForward = true`.                                                                                                                                                                                                                                                                                                                                                                                                 | <code>5</code>     | 2.3.0 |
-| **`metadataUpdateUrl`**      | <code>string</code>  | The URL to fetch metadata updates at the specified interval. Typically used for a radio stream. See the section on [Metadata Updates](#metadata-updates) for more info. Only has affect when `useForNotification = true`.                                                                                                                                                                                                                                                                                |                    | 2.2.0 |
-| **`metadataUpdateInterval`** | <code>number</code>  | The interval to fetch metadata updates in seconds.                                                                                                                                                                                                                                                                                                                                                                                                                                                       | <code>15</code>    | 2.2.0 |
+| Prop                         | Type                 | Description                                                                                                                                                                                                                                                                                                                                                                         | Default            | Since |
+| ---------------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ----- |
+| **`streamBaseUrl`**          | <code>string</code>  | Soundz-good base URL for this listener, e.g. `https://stream.example/streams/app/{channelId}/{clientId}`. The plugin derives every URL it needs from this base: - `${streamBaseUrl}/stream` — the audio stream - `${streamBaseUrl}/metadata` — track metadata polling - `${streamBaseUrl}/vote/{trackId}` — thumbs up/down - `${streamBaseUrl}/skip/{trackId}` — skip current track |                    | 4.0.0 |
+| **`useForNotification`**     | <code>boolean</code> | Whether to use this audio file for the notification. This is considered the primary audio to play. It must be created first and you may only have one at a time.                                                                                                                                                                                                                    | <code>false</code> | 1.0.0 |
+| **`isBackgroundMusic`**      | <code>boolean</code> | Is this audio for background music/audio. Should not be `true` when `useForNotification = true`.                                                                                                                                                                                                                                                                                    | <code>false</code> | 1.0.0 |
+| **`loop`**                   | <code>boolean</code> | Whether or not to loop other audio like background music while the primary audio (`useForNotification = true`) is playing.                                                                                                                                                                                                                                                          | <code>false</code> | 1.0.0 |
+| **`showSeekBackward`**       | <code>boolean</code> | Whether or not to show the seek backward button on the OS's notification. Only has affect when `useForNotification = true`.                                                                                                                                                                                                                                                         | <code>true</code>  | 1.2.0 |
+| **`showSeekForward`**        | <code>boolean</code> | Whether or not to show the seek forward button on the OS's notification. Only has affect when `useForNotification = true`.                                                                                                                                                                                                                                                          | <code>true</code>  | 1.2.0 |
+| **`seekBackwardTime`**       | <code>number</code>  | Time to seek backward in seconds on the OS's notification. Only has affect when `showSeekBackward = true`.                                                                                                                                                                                                                                                                          | <code>5</code>     | 2.3.0 |
+| **`seekForwardTime`**        | <code>number</code>  | Time to seek forward in seconds on the OS's notification. Only has affect when `showSeekForward = true`.                                                                                                                                                                                                                                                                            | <code>5</code>     | 2.3.0 |
+| **`metadataUpdateInterval`** | <code>number</code>  | The interval to fetch metadata updates in seconds.                                                                                                                                                                                                                                                                                                                                  | <code>15</code>    | 2.2.0 |
 
 
 #### AudioPlayerDefaultParams
@@ -596,6 +554,18 @@ It will return all data from the URL response, not just the required data. So yo
 | Prop          | Type                | Description                                        | Since |
 | ------------- | ------------------- | -------------------------------------------------- | ----- |
 | **`audioId`** | <code>string</code> | Any string to differentiate different audio files. | 1.0.0 |
+
+
+#### CurrentTrackEvent
+
+Track metadata payload mirroring the soundz-backend
+`Broadcasts\CurrentTrack` WebSocket message. Returned by `getMetadata` and
+consumed by the in-app UI alongside the WebSocket-driven live updates.
+
+| Prop             | Type                                                                                                                           |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| **`channel_id`** | <code>string</code>                                                                                                            |
+| **`track`**      | <code>{ id: string; artist: string; title: string; album: string; image_url: string; link: string; may_skip: boolean; }</code> |
 
 
 #### AudioPlayerListenerResult
@@ -610,15 +580,5 @@ It will return all data from the URL response, not just the required data. So yo
 | Prop          | Type                | Description                                 | Since |
 | ------------- | ------------------- | ------------------------------------------- | ----- |
 | **`audioId`** | <code>string</code> | The `audioId` set when `create` was called. | 1.0.0 |
-
-
-#### AudioPlayerMetadataUpdateListenerEvent
-
-| Prop                 | Type                | Description                                                               | Since |
-| -------------------- | ------------------- | ------------------------------------------------------------------------- | ----- |
-| **`album_title`**    | <code>string</code> | The album title                                                           | 2.2.0 |
-| **`artist_name`**    | <code>string</code> | The artist name                                                           | 2.2.0 |
-| **`song_title`**     | <code>string</code> | The song title                                                            | 2.2.0 |
-| **`artwork_source`** | <code>string</code> | A URI for the album art image to display on the Android/iOS notification. | 2.2.0 |
 
 </docgen-api>
