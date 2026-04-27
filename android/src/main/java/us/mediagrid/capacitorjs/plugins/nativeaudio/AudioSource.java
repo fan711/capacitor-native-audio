@@ -353,9 +353,15 @@ public class AudioSource extends Binder {
 
     // flushAndReplay drops any buffered audio and reconnects to /stream so
     // the listener hears the new playlist position right after a skip or
-    // downvote-with-may_skip. stop()+play() reuses the existing pause-as-stop
-    // semantics on Android: the network connection is released, then play()
-    // re-prepares from IDLE.
+    // downvote-with-may_skip. The MediaItem is reseated explicitly: stop()
+    // alone does not clear the player's loaded MediaItem, and prepare() on
+    // the same instance can resume from already-fetched state instead of
+    // opening a fresh DataSource, leaving the listener on the just-skipped
+    // track. The in-app pause/play path reseats via AudioSource.play()'s
+    // STATE_IDLE branch — that branch isn't reliable here because the
+    // MediaController's state lags the underlying ExoPlayer when stop()
+    // and play() run on the same main-thread tick, so we reseat
+    // unconditionally.
     //
     // Known: AudioMetadata.stopUpdater schedules a 1s delayed final poll
     // before play()'s startUpdater fires its first request. The delayed
@@ -370,6 +376,8 @@ public class AudioSource extends Binder {
             return;
         }
         player.stop();
+        player.setMediaItem(buildMediaItem());
+        player.prepare();
         player.play();
     }
 

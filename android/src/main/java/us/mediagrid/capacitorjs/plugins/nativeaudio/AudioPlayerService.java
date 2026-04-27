@@ -69,6 +69,16 @@ public class AudioPlayerService extends MediaSessionService {
         // fetches the current broadcast moment rather than resuming stale
         // buffered audio. The MediaSession stays alive, so the notification
         // remains visible across the stop/play cycle.
+        //
+        // The seek-to-prev/next commands are stripped from the advertised
+        // command set: ExoPlayer briefly reports SEEK_TO_PREVIOUS as
+        // available during the stop -> setMediaItem -> prepare transition
+        // that flushAndReplay() drives, which makes the framework flash a
+        // "previous track" affordance into the lockscreen for the duration
+        // of a skip. There is nothing previous to seek to on a live stream
+        // with a single MediaItem, so masking the commands at the player
+        // suppresses the flash everywhere (notification, Auto, Wear) at
+        // once.
         Player sessionPlayer = new ForwardingPlayer(exoPlayer) {
             @Override
             public void pause() {
@@ -81,6 +91,29 @@ public class AudioPlayerService extends MediaSessionService {
                     prepare();
                 }
                 super.play();
+            }
+
+            @Override
+            public Player.Commands getAvailableCommands() {
+                return super.getAvailableCommands().buildUpon()
+                    .removeAll(
+                        Player.COMMAND_SEEK_TO_PREVIOUS,
+                        Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+                        Player.COMMAND_SEEK_TO_NEXT,
+                        Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM
+                    )
+                    .build();
+            }
+
+            @Override
+            public boolean isCommandAvailable(int command) {
+                if (command == Player.COMMAND_SEEK_TO_PREVIOUS
+                    || command == Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM
+                    || command == Player.COMMAND_SEEK_TO_NEXT
+                    || command == Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM) {
+                    return false;
+                }
+                return super.isCommandAvailable(command);
             }
         };
 
