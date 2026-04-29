@@ -1,6 +1,8 @@
 import AVFAudio
 import Capacitor
 import Foundation
+import UserNotifications
+import UIKit
 
 @objc(AudioPlayerPlugin)
 public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -65,6 +67,17 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
             name: UIApplication.didBecomeActiveNotification,
             object: nil
         )
+
+        // Ad-indicator notifications. Same shape as Android: silent shade
+        // entry on ad tracks, tap opens the click-tracking URL. Authorisation
+        // is requested once per install; if denied the notifications simply
+        // never appear.
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            if !granted {
+                print("Ad-indicator notification permission not granted")
+            }
+        }
+        UNUserNotificationCenter.current().delegate = self
     }
 
     @objc func create(_ call: CAPPluginCall) {
@@ -538,5 +551,36 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
         for callbackId in callbackIds.values {
             bridge?.savedCall(withID: callbackId)?.resolve()
         }
+    }
+}
+
+extension AudioPlayerPlugin: UNUserNotificationCenterDelegate {
+    // Tap on the ad-indicator notification → open the click-tracking URL in
+    // Safari. The URL is stashed in userInfo when the notification is posted
+    // (see AudioMetadata.swift). Empty / missing → fall through to the OS
+    // default which opens the app.
+    public func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        if let urlString = response.notification.request.content.userInfo["target_url"] as? String,
+           !urlString.isEmpty,
+           let url = URL(string: urlString) {
+            DispatchQueue.main.async {
+                UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            }
+        }
+        completionHandler()
+    }
+
+    // App in foreground when the notification fires — keep it shade-only,
+    // never banner over our own UI. Matches Android's IMPORTANCE_LOW.
+    public func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.list])
     }
 }
