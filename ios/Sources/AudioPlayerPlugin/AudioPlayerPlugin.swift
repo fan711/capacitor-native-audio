@@ -68,15 +68,11 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
             object: nil
         )
 
-        // Ad-indicator notifications. Same shape as Android: silent shade
-        // entry on ad tracks, tap opens the click-tracking URL. Authorisation
-        // is requested once per install; if denied the notifications simply
-        // never appear.
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            if !granted {
-                print("Ad-indicator notification permission not granted")
-            }
-        }
+        // Ad-indicator notifications. The authorisation request fires from
+        // create() when useForNotification=true so the OS prompt shows up at
+        // a moment the user has context for (just tapped play) rather than
+        // at WebView startup. Setting the delegate here ensures foreground
+        // / tap callbacks are wired from the start.
         UNUserNotificationCenter.current().delegate = self
     }
 
@@ -128,6 +124,16 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
             }
 
             try audioSources.add(source: audioSource)
+
+            if audioSource.useForNotification {
+                UNUserNotificationCenter.current().requestAuthorization(
+                    options: [.alert, .sound, .badge]
+                ) { granted, _ in
+                    if !granted {
+                        print("Ad-indicator notification permission not granted")
+                    }
+                }
+            }
 
             call.resolve()
         } catch {

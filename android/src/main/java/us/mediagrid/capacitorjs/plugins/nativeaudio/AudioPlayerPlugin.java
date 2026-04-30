@@ -1,5 +1,6 @@
 package us.mediagrid.capacitorjs.plugins.nativeaudio;
 
+import android.Manifest;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.ComponentName;
@@ -14,10 +15,13 @@ import androidx.media3.session.SessionCommand;
 import androidx.media3.session.SessionResult;
 import androidx.media3.session.SessionToken;
 import com.getcapacitor.JSObject;
+import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import java.util.HashMap;
@@ -25,7 +29,15 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import us.mediagrid.capacitorjs.plugins.nativeaudio.exceptions.DestroyNotAllowedException;
 
-@CapacitorPlugin(name = "AudioPlayer")
+@CapacitorPlugin(
+    name = "AudioPlayer",
+    permissions = {
+        @Permission(
+            strings = { Manifest.permission.POST_NOTIFICATIONS },
+            alias = "notifications"
+        )
+    }
+)
 public class AudioPlayerPlugin extends Plugin {
 
     private static final String TAG = "AudioPlayerPlugin";
@@ -96,12 +108,29 @@ public class AudioPlayerPlugin extends Plugin {
 
             audioSources.add(audioSource);
 
-            initializeMediaController("create", call, () -> {
-                call.resolve();
-            });
+            if (audioSource.useForNotification
+                && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && getPermissionState("notifications") != PermissionState.GRANTED) {
+                requestPermissionForAlias("notifications", call, "afterNotificationPermission");
+                return;
+            }
+
+            finishCreate(call);
         } catch (Exception ex) {
             call.reject("There was an issue creating the audio player.", ex);
         }
+    }
+
+    @PermissionCallback
+    private void afterNotificationPermission(PluginCall call) {
+        // Granted or denied — proceed either way. If denied, the silent ad
+        // notification's nm.notify() in syncTrackNotification just no-ops;
+        // audio still plays.
+        finishCreate(call);
+    }
+
+    private void finishCreate(PluginCall call) {
+        initializeMediaController("create", call, () -> call.resolve());
     }
 
     @PluginMethod
