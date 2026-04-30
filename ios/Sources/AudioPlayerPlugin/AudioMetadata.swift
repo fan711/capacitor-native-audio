@@ -11,10 +11,10 @@ import UserNotifications
 // foregrounds.
 public class AudioMetadata {
     // Silent shade-only ad-indicator notification, mirror of the Android
-    // implementation. Gated on the metadata payload carrying a non-empty
-    // `target_url`, which the backend only emits for ads with a configured
-    // click destination — so the notification appearing always implies a
-    // tap target.
+    // implementation. Gated on `is_ad` AND a non-empty `target_url`: the
+    // backend now populates target_url for any track with a click destination
+    // (ads and songs alike), so is_ad is what distinguishes "show the ad
+    // shade" from a song's in-app click-through.
     private static let adNotificationId = "now_playing_passive"
 
     var channelId: String = ""
@@ -23,7 +23,6 @@ public class AudioMetadata {
     var title: String = ""
     var album: String = ""
     var imageUrl: String = ""
-    var link: String = ""
     var maySkip: Bool = true
     var isAd: Bool = false
     var targetUrl: String = ""
@@ -159,7 +158,6 @@ public class AudioMetadata {
                     self.title = track["title"] as? String ?? ""
                     self.album = track["album"] as? String ?? ""
                     self.imageUrl = track["image_url"] as? String ?? ""
-                    self.link = track["link"] as? String ?? ""
                     self.maySkip = track["may_skip"] as? Bool ?? true
                     self.isAd = track["is_ad"] as? Bool ?? false
                     self.targetUrl = track["target_url"] as? String ?? ""
@@ -188,10 +186,10 @@ public class AudioMetadata {
 
         let center = UNUserNotificationCenter.current()
 
-        // Same gate as Android: target_url presence drives whether we show
-        // the notification at all. Empty / non-ad → cancel any prior one and
-        // bail.
-        guard !targetUrl.isEmpty else {
+        // Same gate as Android: only show the shade notification for ads
+        // with a click destination. Songs may also carry target_url but get
+        // their click-through from the in-app UI, not a shade notification.
+        guard isAd && !targetUrl.isEmpty else {
             center.removeDeliveredNotifications(withIdentifiers: [Self.adNotificationId])
             center.removePendingNotificationRequests(withIdentifiers: [Self.adNotificationId])
             previousNotifiedTrackId = ""

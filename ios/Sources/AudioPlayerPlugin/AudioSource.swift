@@ -276,8 +276,9 @@ public class AudioSource: NSObject, AVAudioPlayerDelegate {
                 "title": audioMetadata.title,
                 "album": audioMetadata.album,
                 "image_url": audioMetadata.imageUrl,
-                "link": audioMetadata.link,
-                "may_skip": audioMetadata.maySkip
+                "may_skip": audioMetadata.maySkip,
+                "is_ad": audioMetadata.isAd,
+                "target_url": audioMetadata.targetUrl
             ] as [String: Any]
         ]
     }

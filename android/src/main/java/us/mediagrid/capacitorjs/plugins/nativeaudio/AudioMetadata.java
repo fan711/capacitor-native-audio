@@ -31,10 +31,10 @@ public class AudioMetadata {
 
     private static final String TAG = "AudioMetadata";
 
-    // Silent shade-only ad-indicator notification. Gated on the metadata
-    // payload carrying a non-empty `target_url`, which the backend only emits
-    // for ads that have a configured click destination — so the notification
-    // appearing always implies a tap target.
+    // Silent shade-only ad-indicator notification. Gated on `is_ad` AND a
+    // non-empty `target_url`: the backend now populates target_url for any
+    // track with a click destination (ads and songs alike), so is_ad is what
+    // distinguishes "show the ad shade" from a song's in-app click-through.
     private static final String AD_CHANNEL_ID = "now_playing_passive";
     private static final int AD_NOTIFICATION_ID = 9912;
 
@@ -49,7 +49,6 @@ public class AudioMetadata {
     // MediaMetadata artwork (it should swap for the favicon here) or a
     // separate framework icon we haven't reached yet.
     public String imageUrl = "favicon.png";
-    public String link = "";
     public boolean maySkip = true;
     public boolean isAd = false;
     public String targetUrl = "";
@@ -196,7 +195,6 @@ public class AudioMetadata {
                     title = stringOrEmpty(track.getString("title"));
                     album = stringOrEmpty(track.getString("album"));
                     imageUrl = stringOrEmpty(track.getString("image_url"));
-                    link = stringOrEmpty(track.getString("link"));
                     Boolean ms = track.getBool("may_skip");
                     maySkip = ms == null ? true : ms;
                     Boolean ad = track.getBool("is_ad");
@@ -254,10 +252,10 @@ public class AudioMetadata {
         NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
 
-        // Gate is "do we have a click destination" rather than "did the
-        // track id change" — non-ad tracks (and ads without target_url) just
-        // clear any prior notification.
-        if (targetUrl.isEmpty()) {
+        // Gate is is_ad AND a click destination — songs may also carry
+        // target_url but get their click-through from the in-app UI, not a
+        // shade notification.
+        if (!isAd || targetUrl.isEmpty()) {
             nm.cancel(AD_NOTIFICATION_ID);
             previousNotifiedTrackId = "";
             return;

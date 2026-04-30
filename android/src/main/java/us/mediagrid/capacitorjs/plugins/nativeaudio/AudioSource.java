@@ -423,8 +423,9 @@ public class AudioSource extends Binder {
         track.put("title", audioMetadata.title);
         track.put("album", audioMetadata.album);
         track.put("image_url", audioMetadata.imageUrl);
-        track.put("link", audioMetadata.link);
         track.put("may_skip", audioMetadata.maySkip);
+        track.put("is_ad", audioMetadata.isAd);
+        track.put("target_url", audioMetadata.targetUrl);
 
         JSObject result = new JSObject();
         result.put("channel_id", audioMetadata.channelId);

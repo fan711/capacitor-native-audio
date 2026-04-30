@@ -123,8 +123,9 @@ export interface CurrentTrackEvent {
         title: string;
         album: string;
         image_url: string;
-        link: string;
         may_skip: boolean;
+        is_ad: boolean;
+        target_url: string;
     };
 }
 
