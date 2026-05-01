@@ -128,14 +128,17 @@ public class AudioSource extends Binder {
     }
 
     public void play() {
+        // Snapshot before setIsPlaying() flips the flag. Live streams must
+        // restart at the current broadcast moment when coming back from a
+        // stopped state; gating on player.getPlaybackState() == STATE_IDLE is
+        // unreliable because the MediaController's state mirror lags the
+        // underlying ExoPlayer (see flushAndReplay).
+        boolean wasStopped = isStopped;
         setIsPlaying();
 
         Player player = getPlayer();
 
-        if (player.getPlaybackState() == Player.STATE_IDLE) {
-            // MediaController.getCurrentMediaItem() can return null after a
-            // prior stop(); re-seat the item so the metadata poller's
-            // replaceMediaItem() has a target.
+        if (wasStopped) {
             player.setMediaItem(buildMediaItem());
             player.prepare();
         }
