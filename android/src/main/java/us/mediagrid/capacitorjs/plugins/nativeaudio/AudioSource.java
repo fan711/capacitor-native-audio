@@ -139,6 +139,13 @@ public class AudioSource extends Binder {
         Player player = getPlayer();
 
         if (wasStopped) {
+            // Mirror flushAndReplay's stop -> setMediaItem -> prepare
+            // sequence. The leading stop() is a no-op if the underlying
+            // ExoPlayer is already IDLE, but forces it back to IDLE if the
+            // state mirror lied (PlayerEventListener can flip isStopped via
+            // a misclassified pause when onIsPlayingChanged arrives ahead
+            // of the state transition).
+            player.stop();
             player.setMediaItem(buildMediaItem());
             player.prepare();
         }
