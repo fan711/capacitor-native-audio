@@ -99,8 +99,7 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
                 source: streamBaseUrl + "/stream",
                 streamBaseUrl: streamBaseUrl,
                 audioMetadata: AudioMetadata(
-                    updateUrl: streamBaseUrl + "/metadata",
-                    updateInterval: call.getInt("metadataUpdateInterval", -1)
+                    updateUrl: streamBaseUrl + "/metadata-upcoming"
                 ),
                 useForNotification: call.getBool("useForNotification", false),
                 isBackgroundMusic: call.getBool("isBackgroundMusic", false),

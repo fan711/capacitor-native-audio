@@ -85,10 +85,7 @@ public class AudioPlayerPlugin extends Plugin {
                 sourceId,
                 streamBaseUrl + "/stream",
                 streamBaseUrl,
-                new AudioMetadata(
-                    streamBaseUrl + "/metadata",
-                    call.getInt("metadataUpdateInterval")
-                ),
+                new AudioMetadata(streamBaseUrl + "/metadata-upcoming"),
                 call.getBoolean("useForNotification", false),
                 call.getBoolean("isBackgroundMusic", false),
                 call.getBoolean("loop", false)

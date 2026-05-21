@@ -14,7 +14,7 @@ export interface AudioPlayerPrepareParams extends AudioPlayerDefaultParams {
      * derives every URL it needs from this base:
      *
      *   - `${streamBaseUrl}/stream` — the audio stream
-     *   - `${streamBaseUrl}/metadata` — track metadata polling
+     *   - `${streamBaseUrl}/metadata-upcoming` — upcoming-window metadata polling
      *   - `${streamBaseUrl}/vote/{trackId}` — thumbs up/down
      *   - `${streamBaseUrl}/skip/{trackId}` — skip current track
      *
@@ -87,14 +87,6 @@ export interface AudioPlayerPrepareParams extends AudioPlayerDefaultParams {
      * @since 2.3.0
      */
     seekForwardTime?: number;
-
-    /**
-     * The interval to fetch metadata updates in seconds.
-     *
-     * @default 15
-     * @since 2.2.0
-     */
-    metadataUpdateInterval?: number;
 }
 
 export interface AudioPlayerListenerParams {
@@ -127,6 +119,25 @@ export interface CurrentTrackEvent {
         is_ad: boolean;
         target_url: string;
     };
+}
+
+/**
+ * One row of the upcoming-window response from soundz-good's
+ * `/metadata-upcoming` endpoint. `from_us` / `to_us` are absolute UTC
+ * microseconds at which the group starts / ends being heard; the plugin
+ * applies metadata to the OS lockscreen locally at `from_us`.
+ */
+export interface UpcomingMetadataItem {
+    from_us: number;
+    to_us: number;
+    id: string;
+    artist: string;
+    title: string;
+    album: string;
+    image_url: string;
+    may_skip: boolean;
+    is_ad: boolean;
+    target_url: string;
 }
 
 export interface AudioPlayerPlugin {

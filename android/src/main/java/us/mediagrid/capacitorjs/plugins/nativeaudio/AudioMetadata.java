@@ -18,15 +18,24 @@ import com.getcapacitor.plugin.util.HttpRequestHandler;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
-// AudioMetadata polls the soundz-good /metadata endpoint and exposes the
-// most recent track payload to AudioSource (for OS now-playing display) and
-// the host service (for OS button enable/disable). The payload shape mirrors
-// the soundz-backend Broadcasts\CurrentTrack WebSocket message — same field
-// names, same nesting — so the in-app UI can route polling and WS through
-// one handler. This polling is internal to the plugin: nothing is pushed to
-// JS. The app reads the latest snapshot via AudioPlayerPlugin.getMetadata
-// when it foregrounds.
+// AudioMetadata fetches a 2-minute lookahead of upcoming track changes from
+// soundz-good's /metadata-upcoming endpoint every 60 s, holds the items in
+// a local queue, and applies each to the OS MediaSession at its own from_us
+// via a self-rearming apply Handler. AudioSource and AudioPlayerService still
+// read the current track via the same field surface (artist, title, trackId,
+// …) — those fields are written by the apply timer whenever a new group
+// becomes current.
+//
+// Queue is dropped on stop/play/skip (the old timeline is stale); the next
+// refresh repopulates it. Apply-timer fires also drop entries whose to_us
+// is in the past, so the queue stays small.
 public class AudioMetadata {
 
     private static final String TAG = "AudioMetadata";
@@ -38,26 +47,28 @@ public class AudioMetadata {
     private static final String AD_CHANNEL_ID = "now_playing_passive";
     private static final int AD_NOTIFICATION_ID = 9912;
 
+    private static final int REFRESH_INTERVAL_MS = 60 * 1000;
+
     public String channelId = "";
     public String trackId = "";
     public String artist = "";
     public String title = "";
     public String album = "";
     // Default to the bundled favicon as the lockscreen artwork until the
-    // first /metadata poll lands a real image_url. Lets us see whether
-    // the "play-glyph in a circle" the OS shows is in fact the
-    // MediaMetadata artwork (it should swap for the favicon here) or a
-    // separate framework icon we haven't reached yet.
+    // first /metadata-upcoming poll lands a real image_url.
     public String imageUrl = "favicon.png";
     public boolean maySkip = true;
     public boolean isAd = false;
     public String targetUrl = "";
 
     public String updateUrl;
-    public Integer updateInterval = 15;
 
-    private Handler updateHandler = null;
-    private Runnable updateRunner = null;
+    private final List<UpcomingMetadataItem> queue = new ArrayList<>();
+
+    private Handler refreshHandler = null;
+    private Runnable refreshRunner = null;
+    private Handler applyHandler = null;
+    private Runnable applyRunner = null;
     private Runnable updateCallback = null;
 
     private AudioPlayerPlugin pluginOwner;
@@ -65,12 +76,8 @@ public class AudioMetadata {
     private boolean pollerActive = false;
     private String previousNotifiedTrackId = "";
 
-    AudioMetadata(String updateUrl, Integer updateInterval) {
+    AudioMetadata(String updateUrl) {
         this.updateUrl = updateUrl;
-
-        if (updateInterval != null) {
-            this.updateInterval = updateInterval;
-        }
     }
 
     public AudioMetadata setPluginOwner(AudioPlayerPlugin plugin) {
@@ -86,43 +93,57 @@ public class AudioMetadata {
     }
 
     public void startUpdater() {
-        if (!hasUpdateUrl() || updateHandler != null) {
+        if (!hasUpdateUrl() || refreshHandler != null) {
             return;
         }
 
         pollerActive = true;
-        updateHandler = new Handler(Looper.getMainLooper());
-        updateRunner = new Runnable() {
+        refreshHandler = new Handler(Looper.getMainLooper());
+        applyHandler = new Handler(Looper.getMainLooper());
+        refreshRunner = new Runnable() {
             @Override
             public void run() {
-                updateMetadataByUrl(() -> updateHandler.postDelayed(this, updateInterval * 1000));
+                makeUpdateRequest(() -> {
+                    if (refreshHandler != null) {
+                        refreshHandler.postDelayed(this, REFRESH_INTERVAL_MS);
+                    }
+                });
             }
         };
 
-        // 1s delay lets the stream warm up server-side (first handleGroupStart
-        // runs and populates Redis) before the first poll, so the lockscreen
-        // picks up real track metadata on the very first request.
-        updateHandler.postDelayed(updateRunner, 1000);
+        // 1s delay lets the stream warm up server-side (the forwarder's
+        // first items reach Redis) before the first poll, so the lockscreen
+        // picks up real metadata on the very first request.
+        refreshHandler.postDelayed(refreshRunner, 1000);
     }
 
     public void stopUpdater() {
-        if (updateHandler == null) {
+        if (refreshHandler == null) {
             return;
         }
 
         pollerActive = false;
         clearTrackNotification();
-        updateHandler.removeCallbacks(updateRunner);
-        updateHandler = null;
-        updateRunner = null;
+        refreshHandler.removeCallbacks(refreshRunner);
+        refreshHandler = null;
+        refreshRunner = null;
+        if (applyHandler != null && applyRunner != null) {
+            applyHandler.removeCallbacks(applyRunner);
+        }
+        applyHandler = null;
+        applyRunner = null;
+
+        // Drop the queue: the next session's timeline is unrelated.
+        synchronized (queue) {
+            queue.clear();
+        }
 
         // One delayed final poll so the OS audio controls catch up to the
         // server's post-disconnect state (e.g. soundz-good returning channel
         // metadata after the stream connection closes and Deregister fires).
-        // Without this, the lockscreen retains the last in-stream track.
         if (hasUpdateUrl()) {
             new Handler(Looper.getMainLooper()).postDelayed(
-                () -> updateMetadataByUrl(null),
+                () -> makeUpdateRequest(null),
                 1000
             );
         }
@@ -132,7 +153,13 @@ public class AudioMetadata {
         return updateUrl != null && !updateUrl.isEmpty();
     }
 
+    // Force a one-shot refresh — same semantics as before, used by the
+    // foreground-resume path on the JS side.
     public void updateMetadataByUrl(Runnable requeueCallback) {
+        makeUpdateRequest(requeueCallback);
+    }
+
+    private void makeUpdateRequest(Runnable requeueCallback) {
         if (pluginOwner.executorService.isShutdown()) {
             return;
         }
@@ -140,19 +167,12 @@ public class AudioMetadata {
         pluginOwner.executorService.submit(() -> {
             Log.i(TAG, "poll firing for URL=" + updateUrl);
             try {
-                if (makeUpdateRequest()) {
-                    if (updateCallback != null) {
-                        // Updating the MediaController needs to be on the main thread
-                        new Handler(Looper.getMainLooper()).post(() -> {
-                            updateCallback.run();
-                        });
-                    }
-                }
+                fetchAndApplyWindow();
             } catch (Exception ex) {
                 Log.e(TAG, "There was an error running the metadata update", ex);
             } finally {
-                // Always requeue — a single failed poll (e.g. 404 during stream
-                // startup race) must not kill the poller permanently.
+                // Always requeue — a single failed poll (e.g. 404 during
+                // stream startup race) must not kill the poller permanently.
                 if (requeueCallback != null) {
                     requeueCallback.run();
                 }
@@ -160,7 +180,7 @@ public class AudioMetadata {
         });
     }
 
-    private boolean makeUpdateRequest() {
+    private void fetchAndApplyWindow() {
         Log.i(TAG, "Getting metadata from URL " + updateUrl);
         HttpURLConnection urlConnection = null;
 
@@ -170,7 +190,6 @@ public class AudioMetadata {
             urlConnection.setRequestProperty("Accept", "application/json");
 
             InputStream errorStream = urlConnection.getErrorStream();
-
             if (errorStream != null) {
                 Log.e(
                     TAG,
@@ -180,35 +199,38 @@ public class AudioMetadata {
                         HttpRequestHandler.readStreamAsString(errorStream)
                     )
                 );
-            } else {
-                JSObject json = new JSObject(
-                    HttpRequestHandler.readStreamAsString(urlConnection.getInputStream())
-                );
-
-                Log.i(TAG, json.toString());
-
-                channelId = stringOrEmpty(json.getString("channel_id"));
-                JSObject track = json.getJSObject("track");
-                if (track != null) {
-                    trackId = stringOrEmpty(track.getString("id"));
-                    artist = stringOrEmpty(track.getString("artist"));
-                    title = stringOrEmpty(track.getString("title"));
-                    album = stringOrEmpty(track.getString("album"));
-                    imageUrl = stringOrEmpty(track.getString("image_url"));
-                    Boolean ms = track.getBool("may_skip");
-                    maySkip = ms == null ? true : ms;
-                    Boolean ad = track.getBool("is_ad");
-                    isAd = ad != null && ad;
-                    targetUrl = stringOrEmpty(track.getString("target_url"));
-                } else {
-                    isAd = false;
-                    targetUrl = "";
-                }
-
-                syncTrackNotification();
-
-                return true;
+                return;
             }
+
+            JSObject json = new JSObject(
+                HttpRequestHandler.readStreamAsString(urlConnection.getInputStream())
+            );
+
+            String newChannelId = stringOrEmpty(json.getString("channel_id"));
+            List<UpcomingMetadataItem> newQueue = new ArrayList<>();
+            JSONArray items = json.optJSONArray("items");
+            if (items != null) {
+                for (int i = 0; i < items.length(); i++) {
+                    JSONObject obj = items.optJSONObject(i);
+                    if (obj == null) continue;
+                    newQueue.add(UpcomingMetadataItem.fromJson(obj));
+                }
+            }
+            Collections.sort(newQueue, (a, b) -> Long.compare(a.fromUs, b.fromUs));
+
+            synchronized (queue) {
+                queue.clear();
+                queue.addAll(newQueue);
+            }
+            channelId = newChannelId;
+
+            // Apply the now-active entry immediately (the refresh landed
+            // mid-group; the previous queue's current item may have
+            // differed) and arm the apply timer for the next transition.
+            new Handler(Looper.getMainLooper()).post(() -> {
+                fireMetadataUpdated();
+                scheduleNextApply();
+            });
         } catch (Exception ex) {
             Log.e(TAG, "An error occurred trying to get updated metadata", ex);
         } finally {
@@ -216,8 +238,84 @@ public class AudioMetadata {
                 urlConnection.disconnect();
             }
         }
+    }
 
-        return false;
+    // scheduleNextApply prunes outdated entries and arms a one-shot post
+    // for the next item whose from_us is in the future. The post handler
+    // fires fireMetadataUpdated() and re-arms — so there's only ever one
+    // pending applyHandler callback.
+    private void scheduleNextApply() {
+        if (applyHandler == null) return;
+        if (applyRunner != null) {
+            applyHandler.removeCallbacks(applyRunner);
+            applyRunner = null;
+        }
+
+        long nowUs = nowUs();
+        UpcomingMetadataItem next;
+        synchronized (queue) {
+            Iterator<UpcomingMetadataItem> it = queue.iterator();
+            while (it.hasNext()) {
+                if (it.next().toUs < nowUs) {
+                    it.remove();
+                }
+            }
+            next = null;
+            for (UpcomingMetadataItem item : queue) {
+                if (item.fromUs > nowUs) {
+                    next = item;
+                    break;
+                }
+            }
+        }
+        if (next == null) return;
+
+        long delayMs = Math.max(0, (next.fromUs - nowUs) / 1000);
+        applyRunner = () -> {
+            fireMetadataUpdated();
+            scheduleNextApply();
+        };
+        applyHandler.postDelayed(applyRunner, delayMs);
+    }
+
+    private void fireMetadataUpdated() {
+        applyCurrentItem();
+        syncTrackNotification();
+        if (updateCallback != null) {
+            updateCallback.run();
+        }
+    }
+
+    // applyCurrentItem copies the queue entry covering "now" into the public
+    // fields AudioSource / AudioPlayerService read. When no entry covers now,
+    // leave the last-applied values in place — the lockscreen continues
+    // showing the previous track until the next refresh closes the gap.
+    private void applyCurrentItem() {
+        long nowUs = nowUs();
+        UpcomingMetadataItem current = null;
+        synchronized (queue) {
+            for (UpcomingMetadataItem item : queue) {
+                if (item.fromUs <= nowUs && nowUs <= item.toUs) {
+                    current = item;
+                    break;
+                }
+            }
+        }
+        if (current == null) {
+            return;
+        }
+        trackId = current.id;
+        artist = current.artist;
+        title = current.title;
+        album = current.album;
+        imageUrl = current.imageUrl;
+        maySkip = current.maySkip;
+        isAd = current.isAd;
+        targetUrl = current.targetUrl;
+    }
+
+    private static long nowUs() {
+        return System.currentTimeMillis() * 1000L;
     }
 
     private static String stringOrEmpty(String s) {
@@ -327,5 +425,48 @@ public class AudioMetadata {
         NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) nm.cancel(AD_NOTIFICATION_ID);
         previousNotifiedTrackId = "";
+    }
+
+    private static class UpcomingMetadataItem {
+        final long fromUs;
+        final long toUs;
+        final String id;
+        final String artist;
+        final String title;
+        final String album;
+        final String imageUrl;
+        final boolean maySkip;
+        final boolean isAd;
+        final String targetUrl;
+
+        UpcomingMetadataItem(long fromUs, long toUs, String id, String artist, String title,
+                             String album, String imageUrl, boolean maySkip, boolean isAd,
+                             String targetUrl) {
+            this.fromUs = fromUs;
+            this.toUs = toUs;
+            this.id = id;
+            this.artist = artist;
+            this.title = title;
+            this.album = album;
+            this.imageUrl = imageUrl;
+            this.maySkip = maySkip;
+            this.isAd = isAd;
+            this.targetUrl = targetUrl;
+        }
+
+        static UpcomingMetadataItem fromJson(JSONObject obj) {
+            return new UpcomingMetadataItem(
+                obj.optLong("from_us", 0),
+                obj.optLong("to_us", 0),
+                obj.optString("id", ""),
+                obj.optString("artist", ""),
+                obj.optString("title", ""),
+                obj.optString("album", ""),
+                obj.optString("image_url", ""),
+                obj.optBoolean("may_skip", true),
+                obj.optBoolean("is_ad", false),
+                obj.optString("target_url", "")
+            );
+        }
     }
 }
