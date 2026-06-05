@@ -122,11 +122,13 @@ The update interval starts when the audio is played or un-paused and stops when 
 * [`play(...)`](#play)
 * [`pause(...)`](#pause)
 * [`seek(...)`](#seek)
+* [`setEpisodeTimeline(...)`](#setepisodetimeline)
 * [`stop(...)`](#stop)
 * [`setVolume(...)`](#setvolume)
 * [`setRate(...)`](#setrate)
 * [`isPlaying(...)`](#isplaying)
 * [`getMetadata(...)`](#getmetadata)
+* [`openOutputPicker()`](#openoutputpicker)
 * [`destroy(...)`](#destroy)
 * [`onAppGainsFocus(...)`](#onappgainsfocus)
 * [`onAppLosesFocus(...)`](#onapplosesfocus)
@@ -312,6 +314,29 @@ Seek the audio source to a specific time.
 --------------------
 
 
+### setEpisodeTimeline(...)
+
+```typescript
+setEpisodeTimeline(params: AudioPlayerDefaultParams & { items: Array<{ sequence: number; track_id: string; time_start_us: number; time_end_us: number; title: string; artist: string; image_url: string; is_ad: boolean; target_url: string; }>; }) => Promise<void>
+```
+
+Hand the plugin the full on-demand episode timeline so the OS
+lockscreen / Control Center metadata can be driven locally from the
+audio position — without HTTP polling. When the active timeline item
+changes (audio position crosses `time_end_us`), the plugin updates the
+notification metadata directly.
+
+Pass an empty `items` array to clear the timeline (e.g. on switching
+back to a live channel) — the plugin then resumes its default behaviour
+(polling the metadata-upcoming endpoint).
+
+| Param        | Type                                                                                                                                                                                                                                                                    |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`params`** | <code><a href="#audioplayerdefaultparams">AudioPlayerDefaultParams</a> & { items: { sequence: number; track_id: string; time_start_us: number; time_end_us: number; title: string; artist: string; image_url: string; is_ad: boolean; target_url: string; }[]; }</code> |
+
+--------------------
+
+
 ### stop(...)
 
 ```typescript
@@ -403,6 +428,23 @@ handler.
 **Returns:** <code>Promise&lt;<a href="#currenttrackevent">CurrentTrackEvent</a>&gt;</code>
 
 **Since:** 3.1.0
+
+--------------------
+
+
+### openOutputPicker()
+
+```typescript
+openOutputPicker() => Promise<void>
+```
+
+Open the OS native audio-output picker so the listener can route
+playback to an external device. On iOS this is the AirPlay route
+picker; on Android the system Media Output switcher (Bluetooth,
+speaker, cast). Acts on the shared/global audio route, so it takes
+no `audioId`. No-op on web.
+
+**Since:** 4.1.0
 
 --------------------
 
@@ -536,17 +578,16 @@ It may be fixed in the future for Android if a solution is found so don't rely o
 
 #### AudioPlayerPrepareParams
 
-| Prop                         | Type                 | Description                                                                                                                                                                                                                                                                                                                                                                         | Default            | Since |
-| ---------------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ----- |
-| **`streamBaseUrl`**          | <code>string</code>  | Soundz-good base URL for this listener, e.g. `https://stream.example/streams/app/{channelId}/{clientId}`. The plugin derives every URL it needs from this base: - `${streamBaseUrl}/stream` — the audio stream - `${streamBaseUrl}/metadata` — track metadata polling - `${streamBaseUrl}/vote/{trackId}` — thumbs up/down - `${streamBaseUrl}/skip/{trackId}` — skip current track |                    | 4.0.0 |
-| **`useForNotification`**     | <code>boolean</code> | Whether to use this audio file for the notification. This is considered the primary audio to play. It must be created first and you may only have one at a time.                                                                                                                                                                                                                    | <code>false</code> | 1.0.0 |
-| **`isBackgroundMusic`**      | <code>boolean</code> | Is this audio for background music/audio. Should not be `true` when `useForNotification = true`.                                                                                                                                                                                                                                                                                    | <code>false</code> | 1.0.0 |
-| **`loop`**                   | <code>boolean</code> | Whether or not to loop other audio like background music while the primary audio (`useForNotification = true`) is playing.                                                                                                                                                                                                                                                          | <code>false</code> | 1.0.0 |
-| **`showSeekBackward`**       | <code>boolean</code> | Whether or not to show the seek backward button on the OS's notification. Only has affect when `useForNotification = true`.                                                                                                                                                                                                                                                         | <code>true</code>  | 1.2.0 |
-| **`showSeekForward`**        | <code>boolean</code> | Whether or not to show the seek forward button on the OS's notification. Only has affect when `useForNotification = true`.                                                                                                                                                                                                                                                          | <code>true</code>  | 1.2.0 |
-| **`seekBackwardTime`**       | <code>number</code>  | Time to seek backward in seconds on the OS's notification. Only has affect when `showSeekBackward = true`.                                                                                                                                                                                                                                                                          | <code>5</code>     | 2.3.0 |
-| **`seekForwardTime`**        | <code>number</code>  | Time to seek forward in seconds on the OS's notification. Only has affect when `showSeekForward = true`.                                                                                                                                                                                                                                                                            | <code>5</code>     | 2.3.0 |
-| **`metadataUpdateInterval`** | <code>number</code>  | The interval to fetch metadata updates in seconds.                                                                                                                                                                                                                                                                                                                                  | <code>15</code>    | 2.2.0 |
+| Prop                     | Type                 | Description                                                                                                                                                                                                                                                                                                                                                                                            | Default            | Since |
+| ------------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ | ----- |
+| **`streamBaseUrl`**      | <code>string</code>  | Soundz-good base URL for this listener, e.g. `https://stream.example/streams/app/{channelId}/{clientId}`. The plugin derives every URL it needs from this base: - `${streamBaseUrl}/stream` — the audio stream - `${streamBaseUrl}/metadata-upcoming` — upcoming-window metadata polling - `${streamBaseUrl}/vote/{trackId}` — thumbs up/down - `${streamBaseUrl}/skip/{trackId}` — skip current track |                    | 4.0.0 |
+| **`useForNotification`** | <code>boolean</code> | Whether to use this audio file for the notification. This is considered the primary audio to play. It must be created first and you may only have one at a time.                                                                                                                                                                                                                                       | <code>false</code> | 1.0.0 |
+| **`isBackgroundMusic`**  | <code>boolean</code> | Is this audio for background music/audio. Should not be `true` when `useForNotification = true`.                                                                                                                                                                                                                                                                                                       | <code>false</code> | 1.0.0 |
+| **`loop`**               | <code>boolean</code> | Whether or not to loop other audio like background music while the primary audio (`useForNotification = true`) is playing.                                                                                                                                                                                                                                                                             | <code>false</code> | 1.0.0 |
+| **`showSeekBackward`**   | <code>boolean</code> | Whether or not to show the seek backward button on the OS's notification. Only has affect when `useForNotification = true`.                                                                                                                                                                                                                                                                            | <code>true</code>  | 1.2.0 |
+| **`showSeekForward`**    | <code>boolean</code> | Whether or not to show the seek forward button on the OS's notification. Only has affect when `useForNotification = true`.                                                                                                                                                                                                                                                                             | <code>true</code>  | 1.2.0 |
+| **`seekBackwardTime`**   | <code>number</code>  | Time to seek backward in seconds on the OS's notification. Only has affect when `showSeekBackward = true`.                                                                                                                                                                                                                                                                                             | <code>5</code>     | 2.3.0 |
+| **`seekForwardTime`**    | <code>number</code>  | Time to seek forward in seconds on the OS's notification. Only has affect when `showSeekForward = true`.                                                                                                                                                                                                                                                                                               | <code>5</code>     | 2.3.0 |
 
 
 #### AudioPlayerDefaultParams
@@ -556,16 +597,67 @@ It may be fixed in the future for Android if a solution is found so don't rely o
 | **`audioId`** | <code>string</code> | Any string to differentiate different audio files. | 1.0.0 |
 
 
+#### Array
+
+| Prop         | Type                | Description                                                                                            |
+| ------------ | ------------------- | ------------------------------------------------------------------------------------------------------ |
+| **`length`** | <code>number</code> | Gets or sets the length of the array. This is a number one higher than the highest index in the array. |
+
+| Method             | Signature                                                                                                                     | Description                                                                                                                                                                                                                                 |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **toString**       | () =&gt; string                                                                                                               | Returns a string representation of an array.                                                                                                                                                                                                |
+| **toLocaleString** | () =&gt; string                                                                                                               | Returns a string representation of an array. The elements are converted to string using their toLocalString methods.                                                                                                                        |
+| **pop**            | () =&gt; T \| undefined                                                                                                       | Removes the last element from an array and returns it. If the array is empty, undefined is returned and the array is not modified.                                                                                                          |
+| **push**           | (...items: T[]) =&gt; number                                                                                                  | Appends new elements to the end of an array, and returns the new length of the array.                                                                                                                                                       |
+| **concat**         | (...items: <a href="#concatarray">ConcatArray</a>&lt;T&gt;[]) =&gt; T[]                                                       | Combines two or more arrays. This method returns a new array without modifying any existing arrays.                                                                                                                                         |
+| **concat**         | (...items: (T \| <a href="#concatarray">ConcatArray</a>&lt;T&gt;)[]) =&gt; T[]                                                | Combines two or more arrays. This method returns a new array without modifying any existing arrays.                                                                                                                                         |
+| **join**           | (separator?: string \| undefined) =&gt; string                                                                                | Adds all the elements of an array into a string, separated by the specified separator string.                                                                                                                                               |
+| **reverse**        | () =&gt; T[]                                                                                                                  | Reverses the elements in an array in place. This method mutates the array and returns a reference to the same array.                                                                                                                        |
+| **shift**          | () =&gt; T \| undefined                                                                                                       | Removes the first element from an array and returns it. If the array is empty, undefined is returned and the array is not modified.                                                                                                         |
+| **slice**          | (start?: number \| undefined, end?: number \| undefined) =&gt; T[]                                                            | Returns a copy of a section of an array. For both start and end, a negative index can be used to indicate an offset from the end of the array. For example, -2 refers to the second to last element of the array.                           |
+| **sort**           | (compareFn?: ((a: T, b: T) =&gt; number) \| undefined) =&gt; this                                                             | Sorts an array in place. This method mutates the array and returns a reference to the same array.                                                                                                                                           |
+| **splice**         | (start: number, deleteCount?: number \| undefined) =&gt; T[]                                                                  | Removes elements from an array and, if necessary, inserts new elements in their place, returning the deleted elements.                                                                                                                      |
+| **splice**         | (start: number, deleteCount: number, ...items: T[]) =&gt; T[]                                                                 | Removes elements from an array and, if necessary, inserts new elements in their place, returning the deleted elements.                                                                                                                      |
+| **unshift**        | (...items: T[]) =&gt; number                                                                                                  | Inserts new elements at the start of an array, and returns the new length of the array.                                                                                                                                                     |
+| **indexOf**        | (searchElement: T, fromIndex?: number \| undefined) =&gt; number                                                              | Returns the index of the first occurrence of a value in an array, or -1 if it is not present.                                                                                                                                               |
+| **lastIndexOf**    | (searchElement: T, fromIndex?: number \| undefined) =&gt; number                                                              | Returns the index of the last occurrence of a specified value in an array, or -1 if it is not present.                                                                                                                                      |
+| **every**          | &lt;S extends T&gt;(predicate: (value: T, index: number, array: T[]) =&gt; value is S, thisArg?: any) =&gt; this is S[]       | Determines whether all the members of an array satisfy the specified test.                                                                                                                                                                  |
+| **every**          | (predicate: (value: T, index: number, array: T[]) =&gt; unknown, thisArg?: any) =&gt; boolean                                 | Determines whether all the members of an array satisfy the specified test.                                                                                                                                                                  |
+| **some**           | (predicate: (value: T, index: number, array: T[]) =&gt; unknown, thisArg?: any) =&gt; boolean                                 | Determines whether the specified callback function returns true for any element of an array.                                                                                                                                                |
+| **forEach**        | (callbackfn: (value: T, index: number, array: T[]) =&gt; void, thisArg?: any) =&gt; void                                      | Performs the specified action for each element in an array.                                                                                                                                                                                 |
+| **map**            | &lt;U&gt;(callbackfn: (value: T, index: number, array: T[]) =&gt; U, thisArg?: any) =&gt; U[]                                 | Calls a defined callback function on each element of an array, and returns an array that contains the results.                                                                                                                              |
+| **filter**         | &lt;S extends T&gt;(predicate: (value: T, index: number, array: T[]) =&gt; value is S, thisArg?: any) =&gt; S[]               | Returns the elements of an array that meet the condition specified in a callback function.                                                                                                                                                  |
+| **filter**         | (predicate: (value: T, index: number, array: T[]) =&gt; unknown, thisArg?: any) =&gt; T[]                                     | Returns the elements of an array that meet the condition specified in a callback function.                                                                                                                                                  |
+| **reduce**         | (callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) =&gt; T) =&gt; T                           | Calls the specified callback function for all the elements in an array. The return value of the callback function is the accumulated result, and is provided as an argument in the next call to the callback function.                      |
+| **reduce**         | (callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) =&gt; T, initialValue: T) =&gt; T          |                                                                                                                                                                                                                                             |
+| **reduce**         | &lt;U&gt;(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) =&gt; U, initialValue: U) =&gt; U | Calls the specified callback function for all the elements in an array. The return value of the callback function is the accumulated result, and is provided as an argument in the next call to the callback function.                      |
+| **reduceRight**    | (callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) =&gt; T) =&gt; T                           | Calls the specified callback function for all the elements in an array, in descending order. The return value of the callback function is the accumulated result, and is provided as an argument in the next call to the callback function. |
+| **reduceRight**    | (callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) =&gt; T, initialValue: T) =&gt; T          |                                                                                                                                                                                                                                             |
+| **reduceRight**    | &lt;U&gt;(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) =&gt; U, initialValue: U) =&gt; U | Calls the specified callback function for all the elements in an array, in descending order. The return value of the callback function is the accumulated result, and is provided as an argument in the next call to the callback function. |
+
+
+#### ConcatArray
+
+| Prop         | Type                |
+| ------------ | ------------------- |
+| **`length`** | <code>number</code> |
+
+| Method    | Signature                                                          |
+| --------- | ------------------------------------------------------------------ |
+| **join**  | (separator?: string \| undefined) =&gt; string                     |
+| **slice** | (start?: number \| undefined, end?: number \| undefined) =&gt; T[] |
+
+
 #### CurrentTrackEvent
 
 Track metadata payload mirroring the soundz-backend
 `Broadcasts\CurrentTrack` WebSocket message. Returned by `getMetadata` and
 consumed by the in-app UI alongside the WebSocket-driven live updates.
 
-| Prop             | Type                                                                                                                           |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| **`channel_id`** | <code>string</code>                                                                                                            |
-| **`track`**      | <code>{ id: string; artist: string; title: string; album: string; image_url: string; link: string; may_skip: boolean; }</code> |
+| Prop             | Type                                                                                                                                                 |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`channel_id`** | <code>string</code>                                                                                                                                  |
+| **`track`**      | <code>{ id: string; artist: string; title: string; album: string; image_url: string; may_skip: boolean; is_ad: boolean; target_url: string; }</code> |
 
 
 #### AudioPlayerListenerResult

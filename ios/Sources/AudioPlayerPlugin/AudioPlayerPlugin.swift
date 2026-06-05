@@ -1,4 +1,5 @@
 import AVFAudio
+import AVKit
 import Capacitor
 import Foundation
 import UserNotifications
@@ -23,6 +24,7 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "setRate", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "isPlaying", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getMetadata", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "openOutputPicker", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "destroy", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "onAppGainsFocus", returnType: CAPPluginReturnCallback),
         CAPPluginMethod(name: "onAppLosesFocus", returnType: CAPPluginReturnCallback),
@@ -287,6 +289,15 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    /// Stub for the on-demand episode timeline. JS passes the full playlist
+    /// + per-item display metadata so Control Center can be driven from local
+    /// audio position instead of HTTP polling. Resolves immediately — the
+    /// nowPlayingInfo-driving implementation is a follow-up; ignoring here
+    /// is safe because the app-side metadata still drives the in-app UI.
+    @objc func setEpisodeTimeline(_ call: CAPPluginCall) {
+        call.resolve()
+    }
+
     @objc func stop(_ call: CAPPluginCall) {
         do {
             let audioSource = try getAudioSource(methodName: "stop", call: call)
@@ -412,6 +423,36 @@ public class AudioPlayerPlugin: CAPPlugin, CAPBridgedPlugin {
                 nil,
                 error
             )
+        }
+    }
+
+    @objc func openOutputPicker(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { [weak self] in
+            guard let hostView = self?.webView ?? self?.bridge?.viewController?.view else {
+                call.reject("No host view to present the route picker.")
+                return
+            }
+
+            // iOS exposes no public API to present the AirPlay picker directly,
+            // so add a hidden AVRoutePickerView and trigger its internal button.
+            let picker = AVRoutePickerView(frame: .zero)
+            picker.isHidden = true
+            hostView.addSubview(picker)
+
+            for subview in picker.subviews {
+                if let button = subview as? UIButton {
+                    button.sendActions(for: .touchUpInside)
+                    break
+                }
+            }
+
+            // Remove on the next runloop tick, once UIKit has presented the
+            // picker sheet anchored to this view.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                picker.removeFromSuperview()
+            }
+
+            call.resolve()
         }
     }
 

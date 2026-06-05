@@ -5,10 +5,12 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.util.Log;
 import androidx.media3.session.MediaController;
 import androidx.media3.session.SessionCommand;
@@ -370,6 +372,18 @@ public class AudioPlayerPlugin extends Plugin {
         }
     }
 
+    /**
+     * Stub for the on-demand episode timeline. The JS layer passes the full
+     * playlist + per-item display metadata so the OS lockscreen can be driven
+     * from local audio position instead of HTTP polling. Resolves immediately
+     * — the lockscreen-side implementation is a follow-up; ignoring the data
+     * here is safe because the app-side metadata still drives the in-app UI.
+     */
+    @PluginMethod
+    public void setEpisodeTimeline(PluginCall call) {
+        call.resolve();
+    }
+
     @PluginMethod
     public void stop(PluginCall call) {
         try {
@@ -449,6 +463,30 @@ public class AudioPlayerPlugin extends Plugin {
             call.resolve(audioSource.toCurrentTrackEvent());
         } catch (Exception ex) {
             call.reject("There was an issue getting the metadata.", ex);
+        }
+    }
+
+    @PluginMethod
+    public void openOutputPicker(PluginCall call) {
+        try {
+            postToLooper("openOutputPicker", call, () -> {
+                Intent intent;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    // System Media Output switcher — lists Bluetooth, speaker,
+                    // headphones and cast targets.
+                    intent = new Intent(Settings.Panel.ACTION_MEDIA_OUTPUT);
+                } else {
+                    // Pre-Android 10 has no output switcher panel; fall back to
+                    // the Bluetooth settings screen.
+                    intent = new Intent(Settings.ACTION_BLUETOOTH_SETTINGS);
+                }
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getActivity().startActivity(intent);
+
+                call.resolve();
+            });
+        } catch (Exception ex) {
+            call.reject("There was an issue opening the output picker.", ex);
         }
     }
 

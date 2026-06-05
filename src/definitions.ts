@@ -216,6 +216,31 @@ export interface AudioPlayerPlugin {
     seek(params: AudioPlayerDefaultParams & { timeInSeconds: number }): Promise<void>;
 
     /**
+     * Hand the plugin the full on-demand episode timeline so the OS
+     * lockscreen / Control Center metadata can be driven locally from the
+     * audio position — without HTTP polling. When the active timeline item
+     * changes (audio position crosses `time_end_us`), the plugin updates the
+     * notification metadata directly.
+     *
+     * Pass an empty `items` array to clear the timeline (e.g. on switching
+     * back to a live channel) — the plugin then resumes its default behaviour
+     * (polling the metadata-upcoming endpoint).
+     */
+    setEpisodeTimeline(params: AudioPlayerDefaultParams & {
+        items: Array<{
+            sequence: number;
+            track_id: string;
+            time_start_us: number;
+            time_end_us: number;
+            title: string;
+            artist: string;
+            image_url: string;
+            is_ad: boolean;
+            target_url: string;
+        }>;
+    }): Promise<void>;
+
+    /**
      * Stop playing the audio source and reset the current time to zero.
      *
      * @since 1.0.0
@@ -255,6 +280,17 @@ export interface AudioPlayerPlugin {
      * @since 3.1.0
      */
     getMetadata(params: AudioPlayerDefaultParams): Promise<CurrentTrackEvent>;
+
+    /**
+     * Open the OS native audio-output picker so the listener can route
+     * playback to an external device. On iOS this is the AirPlay route
+     * picker; on Android the system Media Output switcher (Bluetooth,
+     * speaker, cast). Acts on the shared/global audio route, so it takes
+     * no `audioId`. No-op on web.
+     *
+     * @since 4.1.0
+     */
+    openOutputPicker(): Promise<void>;
 
     /**
      * Destroy all resources for the audio source.

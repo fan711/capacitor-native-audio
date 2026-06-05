@@ -46,6 +46,30 @@ export class AudioPlayerWeb extends WebPlugin implements AudioPlayerPlugin {
         throw this.unimplemented('Not implemented on web.');
     }
 
+    setEpisodeTimeline(_params: AudioPlayerDefaultParams & {
+        items: Array<{
+            sequence: number;
+            track_id: string;
+            time_start_us: number;
+            time_end_us: number;
+            title: string;
+            artist: string;
+            image_url: string;
+            is_ad: boolean;
+            target_url: string;
+        }>;
+    }): Promise<void> {
+        // Web doesn't use this plugin for lockscreen metadata; the in-app
+        // player drives the MediaSession directly.
+        return Promise.resolve();
+    }
+
+    openOutputPicker(): Promise<void> {
+        // Web routes output through the Audio Output Devices API in the app's
+        // own player composable, not through this plugin.
+        return Promise.resolve();
+    }
+
     stop(params: AudioPlayerDefaultParams): Promise<void> {
         throw this.unimplemented('Not implemented on web.');
     }
